@@ -1,0 +1,65 @@
+HOW TO DEPLOY SAHODKO TO VERCEL @ sahodko.is-pinoy.dev
+=======================================================
+(Vercel deploys from a GitHub repo — one-time setup, then
+every update is automatic.)
+
+STEP 1 — PUT THE SITE ON GITHUB (one time)
+1. Go to https://github.com/new (log in with your GitHub account).
+2. Repository name: sahodko   ->   click "Create repository".
+3. On the empty repo page, click "uploading an existing file".
+4. Open File Explorer at:
+   C:\Users\Nino\OneDrive\Documents\sahodko-site
+5. Drag these files onto the GitHub upload page:
+   index.html, robots.txt, sitemap.xml
+   (you can skip this txt file)
+6. Click "Commit changes". Done — your code is on GitHub.
+
+STEP 2 — CONNECT VERCEL (one time)
+1. Go to https://vercel.com/signup and choose
+   "Continue with GitHub" — this links the two accounts.
+2. Click "Add New..." -> "Project".
+3. Find the "sahodko" repo in the list and click "Import".
+4. Touch NOTHING in the settings (Framework Preset "Other"
+   is correct — it's a plain static site). Click "Deploy".
+5. ~20 seconds later you get a live URL like
+   https://sahodko.vercel.app. The site is live.
+
+STEP 3 — ATTACH THE CUSTOM DOMAIN sahodko.is-pinoy.dev
+1. In your Vercel project: Settings -> Domains.
+2. Type: sahodko.is-pinoy.dev  ->  click "Add".
+3. Vercel shows the DNS record it needs — typically:
+      Type: CNAME
+      Name: sahodko
+      Value: cname.vercel-dns.com
+4. Create that record wherever is-pinoy.dev's DNS is managed:
+   - If is-pinoy.dev is a free community subdomain service
+     (like is-a.dev), follow their registration process and
+     point your subdomain at the CNAME value Vercel shows.
+   - If you (or someone you know) owns is-pinoy.dev, add the
+     CNAME in the domain's DNS panel (Cloudflare, etc.).
+5. Back in Vercel, the domain shows "Valid Configuration"
+   once DNS propagates (minutes to a few hours). HTTPS is
+   automatic.
+
+STEP 4 — SEO KICKSTART (one time, after the domain works)
+1. Go to https://search.google.com/search-console
+2. Add property: https://sahodko.is-pinoy.dev
+3. Verify ownership, then submit the sitemap:
+   https://sahodko.is-pinoy.dev/sitemap.xml
+
+UPDATING THE SITE LATER
+1. Ask Claude to make changes (he regenerates index.html in
+   this folder).
+2. On github.com, open your repo -> "Add file" ->
+   "Upload files" -> drag the new index.html -> "Commit
+   changes". GitHub replaces the old file.
+3. Vercel redeploys automatically within seconds.
+   (Or ask Claude to push via git from this folder — it's
+   already a local git repository.)
+
+IMPORTANT
+- The SEO tags inside index.html (canonical URL), plus
+  robots.txt and sitemap.xml, are written for
+  https://sahodko.is-pinoy.dev — if the domain ever changes,
+  ask Claude to update them.
+- index.html is the entire app. Don't rename it.
