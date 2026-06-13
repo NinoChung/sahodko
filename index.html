@@ -145,7 +145,12 @@ import {
   Repeat,
   Percent,
   Newspaper,
-  Rss
+  Rss,
+  Mail,
+  MessageSquare,
+  Send,
+  CheckCircle2,
+  User
 } from 'lucide-react';
 
 // ============================================================
@@ -1280,6 +1285,172 @@ const NewsTab = ({ t, isDark }) => {
 };
 
 // ============================================================
+// Contact form (Web3Forms)
+// ------------------------------------------------------------
+// Get a free access key in seconds at https://web3forms.com
+// (just enter your email — no account needed). Paste it below.
+// Submissions are emailed to that address; nothing is stored here.
+// ============================================================
+const WEB3FORMS_ACCESS_KEY = '69c20bd2-4a2f-41e7-87dd-64723631b031';
+
+const ContactTab = ({ t, isDark }) => {
+  const [form, setForm] = useState({
+    firstName: '', lastName: '', organization: '', phone: '', email: '', message: ''
+  });
+  const [status, setStatus] = useState('idle'); // idle | sending | success | error
+  const [errorMsg, setErrorMsg] = useState('');
+
+  const set = (k) => (e) => setForm((p) => ({ ...p, [k]: e.target.value }));
+  const keyMissing = !WEB3FORMS_ACCESS_KEY || WEB3FORMS_ACCESS_KEY === 'YOUR_WEB3FORMS_ACCESS_KEY';
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (keyMissing) {
+      setStatus('error');
+      setErrorMsg('The contact form is not configured yet (missing Web3Forms access key).');
+      return;
+    }
+    setStatus('sending');
+    setErrorMsg('');
+    try {
+      const res = await fetch('https://api.web3forms.com/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          access_key: WEB3FORMS_ACCESS_KEY,
+          subject: `SahodKo Contact — ${form.firstName} ${form.lastName}`.trim(),
+          from_name: 'SahodKo Contact Form',
+          name: `${form.firstName} ${form.lastName}`.trim(),
+          'First Name': form.firstName,
+          'Last Name': form.lastName,
+          Organization: form.organization,
+          'Phone Number': form.phone,
+          email: form.email,
+          Message: form.message
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setStatus('success');
+        setForm({ firstName: '', lastName: '', organization: '', phone: '', email: '', message: '' });
+      } else {
+        setStatus('error');
+        setErrorMsg(data.message || 'Something went wrong. Please try again.');
+      }
+    } catch (err) {
+      setStatus('error');
+      setErrorMsg('Network error. Please check your connection and try again.');
+    }
+  };
+
+  const labelCls = `text-[10px] font-bold uppercase tracking-widest ${t.textMuted}`;
+  const FieldIcon = ({ icon: Icon }) => <Icon className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${t.textMuted}`} />;
+
+  if (status === 'success') {
+    return (
+      <div className="max-w-xl mx-auto">
+        <div className={`${t.card} p-8 text-center space-y-4`}>
+          <div className={`mx-auto w-16 h-16 rounded-full flex items-center justify-center ${isDark ? 'bg-[#30D158]/15' : 'bg-[#34C759]/12'}`}>
+            <CheckCircle2 className="w-9 h-9 text-[#30D158]" />
+          </div>
+          <h2 className={`text-xl font-black ${t.text}`}>Message sent!</h2>
+          <p className={`text-xs ${t.textMuted}`}>Thanks for reaching out — we'll get back to you at the email you provided. Salamat!</p>
+          <button onClick={() => setStatus('idle')} className={`${t.primaryBtn} px-5 py-2.5 text-xs`}>
+            Send another message
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-2xl mx-auto space-y-4">
+      <div className="flex items-center gap-2">
+        <Mail className={`w-5 h-5 ${t.textAccent}`} />
+        <div>
+          <h2 className={`text-lg font-bold ${t.text}`}>Contact Us</h2>
+          <p className={`text-xs ${t.textMuted}`}>Questions, feedback, or partnership ideas? Send us a message.</p>
+        </div>
+      </div>
+
+      <form onSubmit={handleSubmit} className={`${t.card} p-6 space-y-4`}>
+        {/* Honeypot anti-spam field — hidden from humans */}
+        <input type="checkbox" name="botcheck" tabIndex={-1} autoComplete="off" className="hidden" aria-hidden="true" />
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <label className={labelCls}>First Name *</label>
+            <div className="relative">
+              <FieldIcon icon={User} />
+              <input type="text" required value={form.firstName} onChange={set('firstName')} placeholder="Juan" className={`${t.input} !pl-9 !py-2.5`} />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <label className={labelCls}>Last Name *</label>
+            <div className="relative">
+              <FieldIcon icon={User} />
+              <input type="text" required value={form.lastName} onChange={set('lastName')} placeholder="Dela Cruz" className={`${t.input} !pl-9 !py-2.5`} />
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-1.5">
+          <label className={labelCls}>Organization</label>
+          <div className="relative">
+            <FieldIcon icon={Building2} />
+            <input type="text" value={form.organization} onChange={set('organization')} placeholder="Company or organization (optional)" className={`${t.input} !pl-9 !py-2.5`} />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <label className={labelCls}>Phone Number</label>
+            <div className="relative">
+              <FieldIcon icon={Phone} />
+              <input type="tel" value={form.phone} onChange={set('phone')} placeholder="+63 9XX XXX XXXX" className={`${t.input} !pl-9 !py-2.5`} />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <label className={labelCls}>Email Address *</label>
+            <div className="relative">
+              <FieldIcon icon={Mail} />
+              <input type="email" required value={form.email} onChange={set('email')} placeholder="you@email.com" className={`${t.input} !pl-9 !py-2.5`} />
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-1.5">
+          <label className={labelCls}>Message *</label>
+          <div className="relative">
+            <MessageSquare className={`absolute left-3 top-3 w-4 h-4 ${t.textMuted}`} />
+            <textarea required rows={5} value={form.message} onChange={set('message')} placeholder="How can we help?" className={`${t.input} !pl-9 !py-2.5 resize-y`} />
+          </div>
+        </div>
+
+        {status === 'error' && (
+          <div className={`flex items-start gap-2 text-[11px] font-semibold p-3 rounded-xl ${isDark ? 'bg-[#FF453A]/15 text-[#FF6961]' : 'bg-[#FF3B30]/10 text-[#D70015]'}`}>
+            <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+            <span>{errorMsg}</span>
+          </div>
+        )}
+
+        <button
+          type="submit"
+          disabled={status === 'sending'}
+          className={`${t.primaryBtn} w-full py-3 text-sm flex items-center justify-center gap-2 ${status === 'sending' ? 'opacity-70 cursor-wait' : ''}`}
+        >
+          {status === 'sending' ? 'Sending…' : <>Send Message <Send className="w-4 h-4" /></>}
+        </button>
+
+        <p className={`text-[10px] text-center ${t.textMuted}`}>
+          Your details are sent securely via Web3Forms and used only to reply to you. We never sell or share your information.
+        </p>
+      </form>
+    </div>
+  );
+};
+
+// ============================================================
 // Main App
 // ============================================================
 const DEFAULT_INPUTS = {
@@ -1565,6 +1736,7 @@ export default function App() {
                   { id: 'guides', label: 'Guides' },
                   { id: 'news', label: 'News' },
                   { id: 'directory', label: 'Directory' },
+                  { id: 'contact', label: 'Contact' },
                   { id: 'saved', label: `Saved (${savedSimulations.length})` }
                 ].map((tab) => (
                   <button
@@ -2339,6 +2511,9 @@ export default function App() {
 
           {/* TAB: AGENCY NEWSROOM */}
           {activeTab === 'news' && <NewsTab t={t} isDark={isDark} />}
+
+          {/* TAB: CONTACT US */}
+          {activeTab === 'contact' && <ContactTab t={t} isDark={isDark} />}
 
           {/* TAB 4: GOVERNMENT AGENCY DIRECTORY */}
           {activeTab === 'directory' && (
