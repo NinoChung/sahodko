@@ -1566,6 +1566,41 @@ export default function App() {
     }
   }, []);
 
+  // Background parallax: the wallpaper blobs drift with scroll and lean
+  // toward the cursor at three different depths, so the glass cards feel
+  // like they float above a moving layer. Respects reduced-motion.
+  const blobBackRef = useRef(null);
+  const blobMidRef = useRef(null);
+  const blobFrontRef = useRef(null);
+  useEffect(() => {
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    let mx = 0, my = 0, tmx = 0, tmy = 0, sy = window.scrollY || 0, raf = 0;
+    const onMove = (e) => {
+      tmx = (e.clientX / window.innerWidth - 0.5) * 2;
+      tmy = (e.clientY / window.innerHeight - 0.5) * 2;
+    };
+    const onScroll = () => { sy = window.scrollY || window.pageYOffset || 0; };
+    const apply = (el, f, sf) => {
+      if (el) el.style.transform = `translate3d(${(mx * 26 * f).toFixed(2)}px, ${(my * 26 * f + sy * sf).toFixed(2)}px, 0) scale(1.18)`;
+    };
+    const tick = () => {
+      mx += (tmx - mx) * 0.06;
+      my += (tmy - my) * 0.06;
+      apply(blobBackRef.current, 0.4, 0.05);
+      apply(blobMidRef.current, 0.85, 0.10);
+      apply(blobFrontRef.current, 1.35, 0.16);
+      raf = requestAnimationFrame(tick);
+    };
+    window.addEventListener('mousemove', onMove, { passive: true });
+    window.addEventListener('scroll', onScroll, { passive: true });
+    raf = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('scroll', onScroll);
+    };
+  }, []);
+
   const triggerToast = (msg) => {
     setNotifMessage(msg);
     setShowNotification(true);
@@ -1750,12 +1785,18 @@ export default function App() {
 
       <div className={`lg-root min-h-screen flex flex-col transition-colors duration-700 relative overflow-hidden ${isDark ? 'bg-[#000004] text-white' : 'bg-[#eef1f8] text-[#1d1d1f]'}`}>
 
-        {/* Liquid Glass wallpaper: vibrant mesh blobs the glass refracts */}
+        {/* Liquid Glass wallpaper: vibrant mesh blobs at three parallax depths the glass refracts */}
         <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none">
-          <div className={`absolute -top-[12%] -left-[8%] w-[45vw] h-[45vw] rounded-full blur-[110px] animate-blob transition-colors duration-700 ${isDark ? 'bg-[#0A84FF]/30' : 'bg-[#7cb8ff]/70 mix-blend-multiply'}`} />
-          <div className={`absolute top-[15%] -right-[10%] w-[40vw] h-[40vw] rounded-full blur-[110px] animate-blob animation-delay-2000 transition-colors duration-700 ${isDark ? 'bg-[#5E5CE6]/25 ' : 'bg-[#c5b6ff]/70 mix-blend-multiply'}`} />
-          <div className={`absolute -bottom-[12%] left-[15%] w-[45vw] h-[45vw] rounded-full blur-[110px] animate-blob animation-delay-4000 transition-colors duration-700 ${isDark ? 'bg-[#64D2FF]/20' : 'bg-[#9be4ff]/70 mix-blend-multiply'}`} />
-          <div className={`absolute top-[45%] left-[40%] w-[30vw] h-[30vw] rounded-full blur-[110px] animate-blob transition-colors duration-700 ${isDark ? 'bg-[#BF5AF2]/15' : 'bg-[#ffd6f2]/60 mix-blend-multiply'}`} />
+          <div ref={blobBackRef} className="absolute inset-0 will-change-transform">
+            <div className={`absolute -top-[12%] -left-[8%] w-[45vw] h-[45vw] rounded-full blur-[110px] animate-blob transition-colors duration-700 ${isDark ? 'bg-[#0A84FF]/30' : 'bg-[#7cb8ff]/70 mix-blend-multiply'}`} />
+            <div className={`absolute -bottom-[12%] left-[15%] w-[45vw] h-[45vw] rounded-full blur-[110px] animate-blob animation-delay-4000 transition-colors duration-700 ${isDark ? 'bg-[#64D2FF]/20' : 'bg-[#9be4ff]/70 mix-blend-multiply'}`} />
+          </div>
+          <div ref={blobMidRef} className="absolute inset-0 will-change-transform">
+            <div className={`absolute top-[15%] -right-[10%] w-[40vw] h-[40vw] rounded-full blur-[110px] animate-blob animation-delay-2000 transition-colors duration-700 ${isDark ? 'bg-[#5E5CE6]/25 ' : 'bg-[#c5b6ff]/70 mix-blend-multiply'}`} />
+          </div>
+          <div ref={blobFrontRef} className="absolute inset-0 will-change-transform">
+            <div className={`absolute top-[45%] left-[40%] w-[30vw] h-[30vw] rounded-full blur-[110px] animate-blob transition-colors duration-700 ${isDark ? 'bg-[#BF5AF2]/15' : 'bg-[#ffd6f2]/60 mix-blend-multiply'}`} />
+          </div>
         </div>
 
         {/* Toast Notification */}
