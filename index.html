@@ -212,6 +212,26 @@ const computeAnnualTax = (annualTaxableIncome) => {
   return b.base + Math.max(0, annualTaxableIncome - b.over) * b.rate;
 };
 
+// Night shift differential window is 10:00 PM – 6:00 AM (Labor Code
+// Art. 86). Returns how many hours of a shift fall inside it,
+// handling overnight shifts (e.g. 9:00 PM – 6:00 AM).
+const computeNdHoursPerShift = (startStr, endStr) => {
+  const toMin = (s) => {
+    const parts = String(s || '0:0').split(':');
+    return (Number(parts[0]) || 0) * 60 + (Number(parts[1]) || 0);
+  };
+  let s = toMin(startStr);
+  let e = toMin(endStr);
+  if (e <= s) e += 1440; // overnight shift wraps past midnight
+  // ND windows on a 2-day axis: 12AM–6AM today, 10PM today–6AM tomorrow, 10PM tomorrow onward
+  const windows = [[0, 360], [1320, 1800], [2760, 3240]];
+  let nd = 0;
+  for (const w of windows) {
+    nd += Math.max(0, Math.min(e, w[1]) - Math.max(s, w[0]));
+  }
+  return nd / 60;
+};
+
 const calculatePayroll2026 = (inputs) => {
   const {
     employmentType,
@@ -223,6 +243,11 @@ const calculatePayroll2026 = (inputs) => {
     absencesTardiness,
     isSmwe,
     workingDaysPerYear,
+    useNightDiff,
+    shiftStart,
+    shiftEnd,
+    nightDiffRate,
+    ndBreakHours,
     overrideSss,
     customSssEE,
     overridePhilhealth,
@@ -237,6 +262,19 @@ const calculatePayroll2026 = (inputs) => {
   const overtime = Number(overtimePay) || 0;
   const holidayDiff = Number(holidayNightDiff) || 0;
   const deductionsAbsences = Number(absencesTardiness) || 0;
+
+  const dpy = Number(workingDaysPerYear) || 261;
+
+  // Auto night differential from the work schedule (Labor Code Art. 86:
+  // at least 10% of the hourly rate per hour worked 10PM–6AM).
+  let autoNightDiff = 0;
+  let ndHoursPerShift = 0;
+  if (useNightDiff) {
+    ndHoursPerShift = Math.max(0, computeNdHoursPerShift(shiftStart, shiftEnd) - (Number(ndBreakHours) || 0));
+    const hourlyRate = (basic * 12) / dpy / 8;
+    const effNdRate = Math.max(10, Number(nightDiffRate) || 10) / 100;
+    autoNightDiff = hourlyRate * effNdRate * ndHoursPerShift * (dpy / 12);
+  }
 
   let eeSSS = 0;
   let erSSS = 0;
@@ -332,7 +370,7 @@ const calculatePayroll2026 = (inputs) => {
   const totalEmployeeDeductions = eeSSS + eeGSIS + eePhilhealth + eePagIbig;
   const totalEmployerDeductions = erSSS + erGSIS + erPhilhealth + erPagIbig;
 
-  const grossTaxableIncome = Math.max(0, (basic + taxableAllowance + overtime + holidayDiff) - deductionsAbsences);
+  const grossTaxableIncome = Math.max(0, (basic + taxableAllowance + overtime + holidayDiff + autoNightDiff) - deductionsAbsences);
   const totalGrossCompensation = grossTaxableIncome + nonTaxableAllowance;
   const monthlyTaxableIncome = Math.max(0, grossTaxableIncome - totalEmployeeDeductions);
 
@@ -347,7 +385,7 @@ const calculatePayroll2026 = (inputs) => {
 
   const netMonthlyPay = totalGrossCompensation - totalEmployeeDeductions - monthlyTax;
 
-  const daysInYear = Number(workingDaysPerYear) || 261;
+  const daysInYear = dpy;
   const monthsInYear = 12;
   const weeksInYear = 52.2;
   const biWeeksInYear = 26;
@@ -364,7 +402,7 @@ const calculatePayroll2026 = (inputs) => {
     weekly: { gross: annualGross / weeksInYear, taxable: (monthlyTaxableIncome * 12) / weeksInYear, sss: annualEEContrib / weeksInYear, gsis: (eeGSIS * 12) / weeksInYear, philhealth: (eePhilhealth * 12) / weeksInYear, pagibig: (eePagIbig * 12) / weeksInYear, deductions: annualEEContrib / weeksInYear, tax: annualTaxTotal / weeksInYear, net: annualNet / weeksInYear, erContribution: (totalEmployerDeductions * 12) / weeksInYear },
     daily: { gross: annualGross / daysInYear, taxable: (monthlyTaxableIncome * 12) / daysInYear, sss: annualEEContrib / daysInYear, gsis: (eeGSIS * 12) / daysInYear, philhealth: (eePhilhealth * 12) / daysInYear, pagibig: (eePagIbig * 12) / daysInYear, deductions: annualEEContrib / daysInYear, tax: annualTaxTotal / daysInYear, net: annualNet / daysInYear, erContribution: (totalEmployerDeductions * 12) / daysInYear },
     annual: { gross: annualGross, taxable: annualTaxableIncome, sss: annualEEContrib, gsis: eeGSIS * 12, philhealth: eePhilhealth * 12, pagibig: eePagIbig * 12, deductions: annualEEContrib, tax: annualTaxTotal, net: annualNet, erContribution: totalEmployerDeductions * 12 },
-    raw: { basic, overtime, holidayDiff, taxableAllowance, nonTaxableAllowance, deductionsAbsences, sssMsc, isSmwe, sssDetails }
+    raw: { basic, overtime, holidayDiff, autoNightDiff, ndHoursPerShift, taxableAllowance, nonTaxableAllowance, deductionsAbsences, sssMsc, isSmwe, sssDetails }
   };
 };
 
@@ -1253,6 +1291,11 @@ const DEFAULT_INPUTS = {
   absencesTardiness: 0,
   isSmwe: false,
   workingDaysPerYear: 261,
+  useNightDiff: false,
+  shiftStart: '21:00',
+  shiftEnd: '06:00',
+  nightDiffRate: 10,
+  ndBreakHours: 0,
   payoutSchedule: 'semi1530',
   contribTiming: 'split',
   taxTiming: 'split',
@@ -1475,23 +1518,6 @@ export default function App() {
           to { transform: translateY(0) scale(1); opacity: 1; }
         }
         .animate-toast { animation: toast-in 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.2) both; }
-        input[type="range"].lg-slider {
-          -webkit-appearance: none;
-          appearance: none;
-          height: 4px;
-          border-radius: 999px;
-        }
-        input[type="range"].lg-slider::-webkit-slider-thumb {
-          -webkit-appearance: none;
-          appearance: none;
-          width: 22px;
-          height: 22px;
-          border-radius: 999px;
-          background: #ffffff;
-          border: 0.5px solid rgba(0,0,0,0.08);
-          box-shadow: 0 3px 8px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.9);
-          cursor: pointer;
-        }
       `}</style>
 
       <div className={`lg-root min-h-screen flex flex-col transition-colors duration-700 relative overflow-hidden ${isDark ? 'bg-[#000004] text-white' : 'bg-[#eef1f8] text-[#1d1d1f]'}`}>
@@ -1573,36 +1599,16 @@ export default function App() {
               {/* PARAMETERS FORM PANEL */}
               <section className={`${t.card} lg:col-span-5 p-6 space-y-6`}>
 
-                <div className="space-y-2">
-                  <div className="flex justify-between items-center">
-                    <label className={`text-xs font-bold ${t.text}`}>Monthly Basic Contract Base</label>
-                    <div className="relative rounded-xl w-36">
-                      <div className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none">
-                        <span className={`text-xs font-bold ${t.textMuted}`}>₱</span>
-                      </div>
-                      <input
-                        type="number"
-                        value={inputs.basicSalary}
-                        onChange={(e) => handleInputChange('basicSalary', e.target.value)}
-                        className={`${t.input} !pl-6 text-right`}
-                      />
-                    </div>
-                  </div>
-                  <input
-                    type="range"
-                    min="5000"
-                    max="250000"
-                    step="500"
-                    value={inputs.basicSalary || 5000}
-                    onChange={(e) => handleInputChange('basicSalary', e.target.value)}
-                    className={`lg-slider w-full cursor-pointer ${isDark ? 'bg-white/15' : 'bg-black/10'}`}
-                    style={{ accentColor: accent }}
-                  />
-                  <div className={`flex justify-between text-[10px] font-bold ${t.textMuted}`}>
-                    <span>₱5k (Floor)</span>
-                    <span>₱100k</span>
-                    <span>₱180k</span>
-                    <span>₱250k (Executive)</span>
+                <div className="space-y-1.5">
+                  <label className={`text-xs font-bold ${t.text}`}>Monthly Basic Pay</label>
+                  <div className="relative">
+                    <span className={`absolute left-4 top-1/2 -translate-y-1/2 text-xl font-bold pointer-events-none ${t.textMuted}`}>₱</span>
+                    <input
+                      type="number"
+                      value={inputs.basicSalary}
+                      onChange={(e) => handleInputChange('basicSalary', e.target.value)}
+                      className={`${t.input} !pl-10 !py-3.5 !text-2xl !font-black !rounded-2xl text-right`}
+                    />
                   </div>
                 </div>
 
@@ -1627,7 +1633,7 @@ export default function App() {
                     </div>
 
                     <div className="space-y-1">
-                      <label className={`text-[10px] font-bold ${t.textMuted}`}>Holiday & Night Diff</label>
+                      <label className={`text-[10px] font-bold ${t.textMuted}`}>{inputs.useNightDiff ? 'Holiday Premiums' : 'Holiday & Night Diff'}</label>
                       <div className="relative">
                         <span className={`absolute left-2.5 top-1.5 text-xs font-bold ${t.textMuted}`}>₱</span>
                         <input
@@ -1684,6 +1690,88 @@ export default function App() {
                       />
                     </div>
                   </div>
+                </div>
+
+                {/* WORK SCHEDULE & NIGHT DIFFERENTIAL */}
+                <div className={`pt-4 border-t ${t.divider} space-y-3`}>
+                  <div className="flex items-center justify-between gap-3">
+                    <h3 className={`text-[10px] font-black uppercase tracking-widest flex items-center gap-1 ${t.textAccent}`}>
+                      <Clock className="w-3.5 h-3.5" /> Work Schedule & Night Differential
+                    </h3>
+                    <Toggle
+                      checked={inputs.useNightDiff}
+                      onChange={(v) => handleInputChange('useNightDiff', v)}
+                      isDark={isDark}
+                    />
+                  </div>
+
+                  {inputs.useNightDiff ? (
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className={`text-[10px] font-bold ${t.textMuted}`}>Shift Start</label>
+                          <input
+                            type="time"
+                            value={inputs.shiftStart}
+                            onChange={(e) => handleOptionChange('shiftStart', e.target.value)}
+                            className={t.input}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className={`text-[10px] font-bold ${t.textMuted}`}>Shift End</label>
+                          <input
+                            type="time"
+                            value={inputs.shiftEnd}
+                            onChange={(e) => handleOptionChange('shiftEnd', e.target.value)}
+                            className={t.input}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className={`text-[10px] font-bold ${t.textMuted}`}>Night Diff Rate (%)</label>
+                          <input
+                            type="number"
+                            min="10"
+                            value={inputs.nightDiffRate}
+                            onChange={(e) => handleInputChange('nightDiffRate', e.target.value)}
+                            className={t.input}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className={`text-[10px] font-bold ${t.textMuted}`}>Unpaid Break in 10PM–6AM (hrs)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.5"
+                            value={inputs.ndBreakHours}
+                            onChange={(e) => handleInputChange('ndBreakHours', e.target.value)}
+                            className={t.input}
+                          />
+                        </div>
+                      </div>
+
+                      <div className={`${t.panel} p-3 grid grid-cols-2 gap-2 text-center`}>
+                        <div>
+                          <span className={`text-[9px] font-bold uppercase tracking-wider block ${t.textMuted}`}>ND Hours / Shift</span>
+                          <span className={`text-sm font-black ${t.text}`}>{(calculatedOutput.raw.ndHoursPerShift || 0).toFixed(1)} hrs</span>
+                        </div>
+                        <div>
+                          <span className={`text-[9px] font-bold uppercase tracking-wider block ${t.textMuted}`}>Est. Monthly ND Pay</span>
+                          <span className="text-sm font-black text-[#30D158]">{peso(calculatedOutput.raw.autoNightDiff || 0)}</span>
+                        </div>
+                      </div>
+
+                      <p className={`text-[10px] leading-relaxed ${t.textMuted}`}>
+                        Night differential applies to hours worked between <strong>10:00 PM and 6:00 AM</strong> (Labor Code Art. 86) at no less than <strong>10%</strong> of your hourly rate — many BPOs pay 15–25%, so adjust the rate to match your employer. Rates below 10% are clamped to the legal floor. The amount is added to your taxable gross automatically; use the "Holiday Premiums" field only for holiday pay to avoid double-counting.
+                      </p>
+                    </div>
+                  ) : (
+                    <p className={`text-[10px] leading-relaxed ${t.textMuted}`}>
+                      Work nights (e.g. 9:00 PM – 6:00 AM)? Turn this on and SahodKo computes your night differential pay from your shift hours automatically.
+                    </p>
+                  )}
                 </div>
 
                 <div className={`pt-4 border-t ${t.divider} space-y-3`}>
