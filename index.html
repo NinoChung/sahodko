@@ -1573,107 +1573,6 @@ export default function App() {
               {/* PARAMETERS FORM PANEL */}
               <section className={`${t.card} lg:col-span-5 p-6 space-y-6`}>
 
-                <div className={`border-b ${t.divider} pb-4`}>
-                  <h2 className={`text-md font-bold flex items-center gap-2 ${t.text}`}>
-                    <Settings className={`w-4 h-4 ${t.textAccent}`} /> Worker Classification
-                  </h2>
-
-                  <Segmented
-                    wrapClass="grid grid-cols-2 mt-3"
-                    options={[
-                      { id: 'private', label: 'Private EE' },
-                      { id: 'government', label: 'Govt (GSIS)' },
-                      { id: 'self-employed', label: 'Freelancer' },
-                      { id: 'kasambahay', label: 'Kasambahay' }
-                    ]}
-                    value={inputs.employmentType}
-                    onChange={handleTypeChange}
-                    t={t}
-                  />
-                </div>
-
-                {/* PAYOUT SCHEDULE & DEDUCTION TIMING */}
-                <div className={`border-b ${t.divider} pb-5 space-y-4`}>
-                  <h2 className={`text-md font-bold flex items-center gap-2 ${t.text}`}>
-                    <CalendarDays className={`w-4 h-4 ${t.textAccent}`} /> Payout Schedule
-                  </h2>
-
-                  <Segmented
-                    wrapClass="grid grid-cols-2"
-                    options={SCHEDULE_OPTIONS}
-                    value={inputs.payoutSchedule}
-                    onChange={(v) => handleOptionChange('payoutSchedule', v)}
-                    t={t}
-                  />
-
-                  {isSemi && (
-                    <div className="space-y-3">
-                      <div className="space-y-1.5">
-                        <label className={`text-[10px] font-bold uppercase tracking-widest ${t.textMuted}`}>
-                          SSS / PhilHealth / Pag-IBIG deducted on
-                        </label>
-                        <Segmented
-                          options={TIMING_OPTIONS}
-                          value={inputs.contribTiming}
-                          onChange={(v) => handleOptionChange('contribTiming', v)}
-                          t={t}
-                          wrapClass="flex items-center"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <label className={`text-[10px] font-bold uppercase tracking-widest ${t.textMuted}`}>
-                          Withholding tax deducted on
-                        </label>
-                        <Segmented
-                          options={TIMING_OPTIONS}
-                          value={inputs.taxTiming}
-                          onChange={(v) => handleOptionChange('taxTiming', v)}
-                          t={t}
-                          wrapClass="flex items-center"
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  {inputs.payoutSchedule === 'weekly' && (
-                    <div className="space-y-1.5">
-                      <label className={`text-[10px] font-bold uppercase tracking-widest ${t.textMuted}`}>
-                        Statutory deductions applied
-                      </label>
-                      <Segmented
-                        options={WEEKLY_TIMING_OPTIONS}
-                        value={inputs.weeklyTiming}
-                        onChange={(v) => handleOptionChange('weeklyTiming', v)}
-                        t={t}
-                        wrapClass="flex items-center"
-                      />
-                    </div>
-                  )}
-
-                  <p className={`text-[10px] leading-relaxed ${t.textMuted}`}>
-                    Many PH employers take government contributions on one cutoff and tax on the other — set this to mirror your actual payslip. See the Payday Breakdown card for the per-payout result.
-                  </p>
-                </div>
-
-                {inputs.employmentType !== 'kasambahay' && (
-                  <div className={`${t.panel} p-4 space-y-2`}>
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex-1">
-                        <span className={`text-xs font-bold block ${t.text}`}>Statutory Minimum Wage Earner?</span>
-                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md inline-block mt-1 ${isDark ? 'bg-[#30D158]/20 text-[#30D158]' : 'bg-[#34C759]/15 text-[#1e9e4a]'}`}>Tax Exempt</span>
-                      </div>
-                      <Toggle
-                        checked={inputs.isSmwe}
-                        onChange={(v) => handleInputChange('isSmwe', v)}
-                        isDark={isDark}
-                      />
-                    </div>
-                    <p className={`text-[10px] leading-relaxed ${t.textMuted}`}>
-                      Under RR No. 11-2018 (TRAIN Law), qualified SMWEs are completely exempt from withholding income tax on basic, overtime, hazard, and night shift premium pays.
-                    </p>
-                  </div>
-                )}
-
                 <div className="space-y-2">
                   <div className="flex justify-between items-center">
                     <label className={`text-xs font-bold ${t.text}`}>Monthly Basic Contract Base</label>
@@ -1854,6 +1753,107 @@ export default function App() {
                     </div>
                   </div>
                 </div>
+
+                <div className={`pt-4 border-t ${t.divider}`}>
+                  <h2 className={`text-md font-bold flex items-center gap-2 ${t.text}`}>
+                    <Settings className={`w-4 h-4 ${t.textAccent}`} /> Worker Classification
+                  </h2>
+
+                  <Segmented
+                    wrapClass="grid grid-cols-2 mt-3"
+                    options={[
+                      { id: 'private', label: 'Private EE' },
+                      { id: 'government', label: 'Govt (GSIS)' },
+                      { id: 'self-employed', label: 'Freelancer' },
+                      { id: 'kasambahay', label: 'Kasambahay' }
+                    ]}
+                    value={inputs.employmentType}
+                    onChange={handleTypeChange}
+                    t={t}
+                  />
+                </div>
+
+                {/* PAYOUT SCHEDULE & DEDUCTION TIMING */}
+                <div className={`pt-4 border-t ${t.divider} space-y-4`}>
+                  <h2 className={`text-md font-bold flex items-center gap-2 ${t.text}`}>
+                    <CalendarDays className={`w-4 h-4 ${t.textAccent}`} /> Payout Schedule
+                  </h2>
+
+                  <Segmented
+                    wrapClass="grid grid-cols-2"
+                    options={SCHEDULE_OPTIONS}
+                    value={inputs.payoutSchedule}
+                    onChange={(v) => handleOptionChange('payoutSchedule', v)}
+                    t={t}
+                  />
+
+                  {isSemi && (
+                    <div className="space-y-3">
+                      <div className="space-y-1.5">
+                        <label className={`text-[10px] font-bold uppercase tracking-widest ${t.textMuted}`}>
+                          SSS / PhilHealth / Pag-IBIG deducted on
+                        </label>
+                        <Segmented
+                          options={TIMING_OPTIONS}
+                          value={inputs.contribTiming}
+                          onChange={(v) => handleOptionChange('contribTiming', v)}
+                          t={t}
+                          wrapClass="flex items-center"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className={`text-[10px] font-bold uppercase tracking-widest ${t.textMuted}`}>
+                          Withholding tax deducted on
+                        </label>
+                        <Segmented
+                          options={TIMING_OPTIONS}
+                          value={inputs.taxTiming}
+                          onChange={(v) => handleOptionChange('taxTiming', v)}
+                          t={t}
+                          wrapClass="flex items-center"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {inputs.payoutSchedule === 'weekly' && (
+                    <div className="space-y-1.5">
+                      <label className={`text-[10px] font-bold uppercase tracking-widest ${t.textMuted}`}>
+                        Statutory deductions applied
+                      </label>
+                      <Segmented
+                        options={WEEKLY_TIMING_OPTIONS}
+                        value={inputs.weeklyTiming}
+                        onChange={(v) => handleOptionChange('weeklyTiming', v)}
+                        t={t}
+                        wrapClass="flex items-center"
+                      />
+                    </div>
+                  )}
+
+                  <p className={`text-[10px] leading-relaxed ${t.textMuted}`}>
+                    Many PH employers take government contributions on one cutoff and tax on the other — set this to mirror your actual payslip. See the Payday Breakdown card for the per-payout result.
+                  </p>
+                </div>
+
+                {inputs.employmentType !== 'kasambahay' && (
+                  <div className={`${t.panel} p-4 space-y-2`}>
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex-1">
+                        <span className={`text-xs font-bold block ${t.text}`}>Statutory Minimum Wage Earner?</span>
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md inline-block mt-1 ${isDark ? 'bg-[#30D158]/20 text-[#30D158]' : 'bg-[#34C759]/15 text-[#1e9e4a]'}`}>Tax Exempt</span>
+                      </div>
+                      <Toggle
+                        checked={inputs.isSmwe}
+                        onChange={(v) => handleInputChange('isSmwe', v)}
+                        isDark={isDark}
+                      />
+                    </div>
+                    <p className={`text-[10px] leading-relaxed ${t.textMuted}`}>
+                      Under RR No. 11-2018 (TRAIN Law), qualified SMWEs are completely exempt from withholding income tax on basic, overtime, hazard, and night shift premium pays.
+                    </p>
+                  </div>
+                )}
 
                 <div className={`pt-4 border-t ${t.divider} space-y-2`}>
                   <h3 className={`text-[10px] font-black uppercase tracking-widest ${t.textMuted}`}>Save Snapshot to Cache</h3>
