@@ -551,7 +551,7 @@ const CustomDonutChart = ({ data, t, isDark }) => {
   let accumulatedAngle = 0;
 
   return (
-    <div className={`flex flex-col sm:flex-row lg:flex-col xl:flex-row items-center justify-center gap-6 p-5 h-full w-full min-w-0 ${t.panel}`}>
+    <div className={`flex flex-col sm:flex-row lg:flex-col items-center justify-center gap-6 p-5 h-full w-full min-w-0 ${t.panel}`}>
       <div className="relative w-36 h-36 flex-shrink-0 flex items-center justify-center">
         <svg viewBox="0 0 100 100" className="w-full h-full transform -rotate-90 drop-shadow-xl">
           <circle
@@ -1133,13 +1133,6 @@ const FALLBACK_NEWS = [
   { agency: 'dole', title: 'Philippines minimum wage rates, ranked from highest to lowest', source: 'GMA News', date: '2026-05-28', url: 'https://www.gmanetwork.com/news/topstories/nation/986075/how-much-philippines-minimum-wage-rates-ranked-from-highest-to-lowest/story/' }
 ];
 
-// CORS relays, tried in order with a timeout each. If all fail,
-// the caller falls back to the bundled headlines.
-const NEWS_RELAYS = [
-  (u) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
-  (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`
-];
-
 const fetchWithTimeout = (url, ms) => {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), ms);
@@ -1148,10 +1141,18 @@ const fetchWithTimeout = (url, ms) => {
 
 const fetchAgencyNews = async (agency) => {
   const rss = `https://news.google.com/rss/search?q=${encodeURIComponent(agency.q)}&hl=en-PH&gl=PH&ceid=PH:en`;
+  // Try our own Vercel function first (fast, edge-cached, first-party),
+  // then public CORS relays. If everything fails the caller falls back
+  // to the bundled headlines.
+  const attempts = [
+    `/api/news?q=${encodeURIComponent(agency.q)}`,
+    `https://corsproxy.io/?url=${encodeURIComponent(rss)}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(rss)}`
+  ];
   let lastError = new Error('no relay available');
-  for (const wrap of NEWS_RELAYS) {
+  for (const attempt of attempts) {
     try {
-      const res = await fetchWithTimeout(wrap(rss), 8000);
+      const res = await fetchWithTimeout(attempt, 8000);
       if (!res.ok) throw new Error(`relay status ${res.status}`);
       const xml = new DOMParser().parseFromString(await res.text(), 'text/xml');
       const items = Array.from(xml.querySelectorAll('item')).slice(0, 8).map((item) => {
@@ -1850,7 +1851,7 @@ export default function App() {
                   <Segmented
                     wrapClass="grid grid-cols-2 mt-3"
                     options={[
-                      { id: 'private', label: 'Private EE' },
+                      { id: 'private', label: 'Private Employee' },
                       { id: 'government', label: 'Govt (GSIS)' },
                       { id: 'self-employed', label: 'Freelancer' },
                       { id: 'kasambahay', label: 'Kasambahay' }
