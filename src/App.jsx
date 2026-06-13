@@ -1,0 +1,2694 @@
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  Calculator,
+  TrendingUp,
+  History,
+  Printer,
+  ArrowRight,
+  ArrowLeft,
+  Trash2,
+  Info,
+  PlusCircle,
+  ShieldCheck,
+  Layers,
+  Sparkles,
+  Sun,
+  Moon,
+  Settings,
+  Wallet,
+  CalendarDays,
+  AlertTriangle,
+  Phone,
+  Globe,
+  ExternalLink,
+  BookOpen,
+  ChevronDown,
+  Building2,
+  HeartPulse,
+  Home,
+  HardHat,
+  Gift,
+  Clock,
+  Repeat,
+  Percent,
+  Newspaper,
+  Rss,
+  Mail,
+  MessageSquare,
+  Send,
+  CheckCircle2,
+  User
+} from 'lucide-react';
+
+// ============================================================
+// 2026 Philippine Tax and Contribution Constants
+// ============================================================
+const PHILHEALTH_RATE_2026 = 0.05; // 5.0% for 2026
+const PHILHEALTH_MIN_SALARY = 10000;
+const PHILHEALTH_MAX_SALARY = 100000;
+
+const PAGIBIG_MAX_SALARY_LIMIT = 10000;
+
+const computeSssDetails = (basicSalary) => {
+  if (basicSalary < 5250) {
+    return {
+      msc: 5000,
+      eeRegular: 5000 * 0.05,
+      erRegular: 5000 * 0.10,
+      eeMpf: 0,
+      erMpf: 0,
+      ec: 10,
+      eeTotal: 250,
+      erTotal: 500 + 10
+    };
+  }
+
+  const rawMsc = Math.round(basicSalary / 500) * 500;
+  const msc = Math.max(5000, Math.min(35000, rawMsc));
+
+  const regularMsc = Math.min(20000, msc);
+  const mpfMsc = Math.max(0, msc - 20000);
+
+  const eeRegular = regularMsc * 0.05;
+  const erRegular = regularMsc * 0.10;
+
+  const eeMpf = mpfMsc * 0.05;
+  const erMpf = mpfMsc * 0.10;
+
+  const ec = msc < 15000 ? 10 : 30;
+
+  return {
+    msc,
+    eeRegular,
+    erRegular,
+    eeMpf,
+    erMpf,
+    ec,
+    eeTotal: eeRegular + eeMpf,
+    erTotal: erRegular + erMpf + ec
+  };
+};
+
+// BIR TRAIN Law graduated brackets (Phase 2, effective Jan 2023 — unchanged for 2026)
+const TAX_BRACKETS = [
+  { upTo: 250000, base: 0, rate: 0, over: 0 },
+  { upTo: 400000, base: 0, rate: 0.15, over: 250000 },
+  { upTo: 800000, base: 22500, rate: 0.20, over: 400000 },
+  { upTo: 2000000, base: 102500, rate: 0.25, over: 800000 },
+  { upTo: 8000000, base: 402500, rate: 0.30, over: 2000000 },
+  { upTo: Infinity, base: 2202500, rate: 0.35, over: 8000000 }
+];
+
+const computeAnnualTax = (annualTaxableIncome) => {
+  const b = TAX_BRACKETS.find((br) => annualTaxableIncome <= br.upTo);
+  return b.base + Math.max(0, annualTaxableIncome - b.over) * b.rate;
+};
+
+// Night shift differential window is 10:00 PM – 6:00 AM (Labor Code
+// Art. 86). Returns how many hours of a shift fall inside it,
+// handling overnight shifts (e.g. 9:00 PM – 6:00 AM).
+const computeNdHoursPerShift = (startStr, endStr) => {
+  const toMin = (s) => {
+    const parts = String(s || '0:0').split(':');
+    return (Number(parts[0]) || 0) * 60 + (Number(parts[1]) || 0);
+  };
+  let s = toMin(startStr);
+  let e = toMin(endStr);
+  if (e <= s) e += 1440; // overnight shift wraps past midnight
+  // ND windows on a 2-day axis: 12AM–6AM today, 10PM today–6AM tomorrow, 10PM tomorrow onward
+  const windows = [[0, 360], [1320, 1800], [2760, 3240]];
+  let nd = 0;
+  for (const w of windows) {
+    nd += Math.max(0, Math.min(e, w[1]) - Math.max(s, w[0]));
+  }
+  return nd / 60;
+};
+
+const calculatePayroll2026 = (inputs) => {
+  const {
+    employmentType,
+    basicSalary,
+    taxableAllowances,
+    nonTaxableAllowances,
+    overtimePay,
+    holidayNightDiff,
+    absencesTardiness,
+    isSmwe,
+    workingDaysPerYear,
+    useNightDiff,
+    shiftStart,
+    shiftEnd,
+    nightDiffRate,
+    ndBreakHours,
+    overrideSss,
+    customSssEE,
+    overridePhilhealth,
+    customPhilhealthEE,
+    overridePagibig,
+    customPagibigEE
+  } = inputs;
+
+  const basic = Number(basicSalary) || 0;
+  const taxableAllowance = Number(taxableAllowances) || 0;
+  const nonTaxableAllowance = Number(nonTaxableAllowances) || 0;
+  const overtime = Number(overtimePay) || 0;
+  const holidayDiff = Number(holidayNightDiff) || 0;
+  const deductionsAbsences = Number(absencesTardiness) || 0;
+
+  const dpy = Number(workingDaysPerYear) || 261;
+
+  // Auto night differential from the work schedule (Labor Code Art. 86:
+  // at least 10% of the hourly rate per hour worked 10PM–6AM).
+  let autoNightDiff = 0;
+  let ndHoursPerShift = 0;
+  if (useNightDiff) {
+    ndHoursPerShift = Math.max(0, computeNdHoursPerShift(shiftStart, shiftEnd) - (Number(ndBreakHours) || 0));
+    const hourlyRate = (basic * 12) / dpy / 8;
+    const effNdRate = Math.max(10, Number(nightDiffRate) || 10) / 100;
+    autoNightDiff = hourlyRate * effNdRate * ndHoursPerShift * (dpy / 12);
+  }
+
+  let eeSSS = 0;
+  let erSSS = 0;
+  let sssMsc = 0;
+  let sssDetails = null;
+
+  let eeGSIS = 0;
+  let erGSIS = 0;
+
+  let eePhilhealth = 0;
+  let erPhilhealth = 0;
+
+  let eePagIbig = 0;
+  let erPagIbig = 0;
+
+  if (employmentType === 'private') {
+    sssDetails = computeSssDetails(basic);
+    sssMsc = sssDetails.msc;
+    eeSSS = overrideSss ? (Number(customSssEE) || 0) : sssDetails.eeTotal;
+    erSSS = sssDetails.erTotal;
+
+    const phBase = Math.max(PHILHEALTH_MIN_SALARY, Math.min(PHILHEALTH_MAX_SALARY, basic));
+    const phTotal = phBase * PHILHEALTH_RATE_2026;
+    eePhilhealth = overridePhilhealth ? (Number(customPhilhealthEE) || 0) : (phTotal / 2);
+    erPhilhealth = phTotal / 2;
+
+    const piBase = Math.min(PAGIBIG_MAX_SALARY_LIMIT, basic);
+    const piRateEE = basic <= 1500 ? 0.01 : 0.02;
+    eePagIbig = overridePagibig ? (Number(customPagibigEE) || 0) : (piBase * piRateEE);
+    erPagIbig = piBase * 0.02;
+  } else if (employmentType === 'government') {
+    eeGSIS = basic * 0.09;
+    erGSIS = basic * 0.12;
+
+    const phBase = Math.max(PHILHEALTH_MIN_SALARY, Math.min(PHILHEALTH_MAX_SALARY, basic));
+    const phTotal = phBase * PHILHEALTH_RATE_2026;
+    eePhilhealth = overridePhilhealth ? (Number(customPhilhealthEE) || 0) : (phTotal / 2);
+    erPhilhealth = phTotal / 2;
+
+    const piBase = Math.min(PAGIBIG_MAX_SALARY_LIMIT, basic);
+    const piRateEE = basic <= 1500 ? 0.01 : 0.02;
+    eePagIbig = overridePagibig ? (Number(customPagibigEE) || 0) : (piBase * piRateEE);
+    erPagIbig = piBase * 0.02;
+  } else if (employmentType === 'self-employed') {
+    sssDetails = computeSssDetails(basic);
+    sssMsc = sssDetails.msc;
+    eeSSS = overrideSss ? (Number(customSssEE) || 0) : (sssDetails.msc * 0.15);
+    erSSS = 0;
+
+    const phBase = Math.max(PHILHEALTH_MIN_SALARY, Math.min(PHILHEALTH_MAX_SALARY, basic));
+    eePhilhealth = overridePhilhealth ? (Number(customPhilhealthEE) || 0) : (phBase * PHILHEALTH_RATE_2026);
+    erPhilhealth = 0;
+
+    const piBase = Math.min(PAGIBIG_MAX_SALARY_LIMIT, basic);
+    const rate = basic <= 1500 ? 0.03 : 0.04;
+    eePagIbig = overridePagibig ? (Number(customPagibigEE) || 0) : (piBase * rate);
+    erPagIbig = 0;
+  } else if (employmentType === 'kasambahay') {
+    const isEmployerShouldered = basic < 5000;
+
+    sssDetails = computeSssDetails(basic);
+    sssMsc = sssDetails.msc;
+
+    if (isEmployerShouldered) {
+      eeSSS = 0;
+      erSSS = sssDetails.eeTotal + sssDetails.erTotal;
+    } else {
+      eeSSS = overrideSss ? (Number(customSssEE) || 0) : sssDetails.eeTotal;
+      erSSS = sssDetails.erTotal;
+    }
+
+    const phBase = Math.max(PHILHEALTH_MIN_SALARY, Math.min(PHILHEALTH_MAX_SALARY, basic));
+    const phTotal = phBase * PHILHEALTH_RATE_2026;
+    if (isEmployerShouldered) {
+      eePhilhealth = 0;
+      erPhilhealth = phTotal;
+    } else {
+      eePhilhealth = overridePhilhealth ? (Number(customPhilhealthEE) || 0) : (phTotal / 2);
+      erPhilhealth = phTotal / 2;
+    }
+
+    const piBase = Math.min(PAGIBIG_MAX_SALARY_LIMIT, basic);
+    const piRateEE = basic <= 1500 ? 0.01 : 0.02;
+    if (isEmployerShouldered) {
+      eePagIbig = 0;
+      erPagIbig = piBase * 0.04;
+    } else {
+      eePagIbig = overridePagibig ? (Number(customPagibigEE) || 0) : (piBase * piRateEE);
+      erPagIbig = piBase * 0.02;
+    }
+  }
+
+  const totalEmployeeDeductions = eeSSS + eeGSIS + eePhilhealth + eePagIbig;
+  const totalEmployerDeductions = erSSS + erGSIS + erPhilhealth + erPagIbig;
+
+  const grossTaxableIncome = Math.max(0, (basic + taxableAllowance + overtime + holidayDiff + autoNightDiff) - deductionsAbsences);
+  const totalGrossCompensation = grossTaxableIncome + nonTaxableAllowance;
+  const monthlyTaxableIncome = Math.max(0, grossTaxableIncome - totalEmployeeDeductions);
+
+  let monthlyTax = 0;
+  const annualTaxableIncome = monthlyTaxableIncome * 12;
+
+  if (isSmwe) {
+    monthlyTax = 0;
+  } else {
+    monthlyTax = computeAnnualTax(annualTaxableIncome) / 12;
+  }
+
+  const netMonthlyPay = totalGrossCompensation - totalEmployeeDeductions - monthlyTax;
+
+  const daysInYear = dpy;
+  const monthsInYear = 12;
+  const weeksInYear = 52.2;
+  const biWeeksInYear = 26;
+
+  const annualGross = totalGrossCompensation * monthsInYear;
+  const annualNet = netMonthlyPay * monthsInYear;
+  const annualTaxTotal = monthlyTax * monthsInYear;
+  const annualEEContrib = totalEmployeeDeductions * monthsInYear;
+
+  return {
+    monthly: { gross: totalGrossCompensation, taxable: monthlyTaxableIncome, sss: eeSSS, gsis: eeGSIS, philhealth: eePhilhealth, pagibig: eePagIbig, deductions: totalEmployeeDeductions, tax: monthlyTax, net: netMonthlyPay, erContribution: totalEmployerDeductions },
+    semiMonthly: { gross: totalGrossCompensation / 2, taxable: monthlyTaxableIncome / 2, sss: eeSSS / 2, gsis: eeGSIS / 2, philhealth: eePhilhealth / 2, pagibig: eePagIbig / 2, deductions: totalEmployeeDeductions / 2, tax: monthlyTax / 2, net: netMonthlyPay / 2, erContribution: totalEmployerDeductions / 2 },
+    biWeekly: { gross: annualGross / biWeeksInYear, taxable: (monthlyTaxableIncome * 12) / biWeeksInYear, sss: annualEEContrib / biWeeksInYear, gsis: (eeGSIS * 12) / biWeeksInYear, philhealth: (eePhilhealth * 12) / biWeeksInYear, pagibig: (eePagIbig * 12) / biWeeksInYear, deductions: annualEEContrib / biWeeksInYear, tax: annualTaxTotal / biWeeksInYear, net: annualNet / biWeeksInYear, erContribution: (totalEmployerDeductions * 12) / biWeeksInYear },
+    weekly: { gross: annualGross / weeksInYear, taxable: (monthlyTaxableIncome * 12) / weeksInYear, sss: annualEEContrib / weeksInYear, gsis: (eeGSIS * 12) / weeksInYear, philhealth: (eePhilhealth * 12) / weeksInYear, pagibig: (eePagIbig * 12) / weeksInYear, deductions: annualEEContrib / weeksInYear, tax: annualTaxTotal / weeksInYear, net: annualNet / weeksInYear, erContribution: (totalEmployerDeductions * 12) / weeksInYear },
+    daily: { gross: annualGross / daysInYear, taxable: (monthlyTaxableIncome * 12) / daysInYear, sss: annualEEContrib / daysInYear, gsis: (eeGSIS * 12) / daysInYear, philhealth: (eePhilhealth * 12) / daysInYear, pagibig: (eePagIbig * 12) / daysInYear, deductions: annualEEContrib / daysInYear, tax: annualTaxTotal / daysInYear, net: annualNet / daysInYear, erContribution: (totalEmployerDeductions * 12) / daysInYear },
+    annual: { gross: annualGross, taxable: annualTaxableIncome, sss: annualEEContrib, gsis: eeGSIS * 12, philhealth: eePhilhealth * 12, pagibig: eePagIbig * 12, deductions: annualEEContrib, tax: annualTaxTotal, net: annualNet, erContribution: totalEmployerDeductions * 12 },
+    raw: { basic, overtime, holidayDiff, autoNightDiff, ndHoursPerShift, taxableAllowance, nonTaxableAllowance, deductionsAbsences, sssMsc, isSmwe, sssDetails }
+  };
+};
+
+const solveGrossFromNet2026 = (targetNet, inputs) => {
+  let low = targetNet;
+  let high = targetNet * 3 + 150000;
+  let mid = 0;
+  let iterations = 0;
+  const tolerance = 0.01;
+
+  while (high - low > tolerance && iterations < 100) {
+    mid = (low + high) / 2;
+    const testInputs = { ...inputs, basicSalary: mid };
+    const computed = calculatePayroll2026(testInputs);
+    if (computed.monthly.net < targetNet) {
+      low = mid;
+    } else {
+      high = mid;
+    }
+    iterations++;
+  }
+  return mid;
+};
+
+// ============================================================
+// Payout Schedule & Deduction Timing Engine
+// ------------------------------------------------------------
+// Employers in the PH deduct statutory contributions and
+// withholding tax on different cutoffs. This maps the monthly
+// figures onto the actual paychecks an employee receives.
+// ============================================================
+const SCHEDULE_OPTIONS = [
+  { id: 'semi1530', label: '15th & 30th' },
+  { id: 'semi520', label: '5th & 20th' },
+  { id: 'weekly', label: 'Weekly' },
+  { id: 'monthly', label: 'Monthly' }
+];
+
+const TIMING_OPTIONS = [
+  { id: 'first', label: '1st Cutoff' },
+  { id: 'split', label: 'Split 50/50' },
+  { id: 'second', label: '2nd Cutoff' }
+];
+
+const WEEKLY_TIMING_OPTIONS = [
+  { id: 'split', label: 'Spread Weekly' },
+  { id: 'first', label: '1st Week Only' }
+];
+
+const computePaychecks = (calc, inputs) => {
+  const m = calc.monthly;
+  const contribs = m.deductions;
+  const tax = m.tax;
+  const sched = inputs.payoutSchedule;
+
+  const alloc = (amount, timing) =>
+    timing === 'first' ? [amount, 0] : timing === 'second' ? [0, amount] : [amount / 2, amount / 2];
+
+  if (sched === 'monthly') {
+    return {
+      scheduleLabel: 'Monthly · single payout',
+      checks: [
+        { label: 'Monthly Payday', sub: 'Once a month — all deductions applied here', gross: m.gross, contribs, tax, net: m.net }
+      ]
+    };
+  }
+
+  if (sched === 'weekly') {
+    const wGross = (m.gross * 12) / 52;
+    if (inputs.weeklyTiming === 'first') {
+      return {
+        scheduleLabel: 'Weekly · deductions on 1st week',
+        checks: [
+          { label: 'Deduction Week', sub: '1st payout of the month', gross: wGross, contribs, tax, net: wGross - contribs - tax },
+          { label: 'Regular Weeks', sub: 'All other weekly payouts', gross: wGross, contribs: 0, tax: 0, net: wGross }
+        ]
+      };
+    }
+    const wC = (contribs * 12) / 52;
+    const wT = (tax * 12) / 52;
+    return {
+      scheduleLabel: 'Weekly · deductions spread evenly',
+      checks: [
+        { label: 'Every Week', sub: '52 payouts per year', gross: wGross, contribs: wC, tax: wT, net: wGross - wC - wT }
+      ]
+    };
+  }
+
+  const labels = sched === 'semi520' ? ['Every 5th', 'Every 20th'] : ['Every 15th', 'Every 30th'];
+  const [c1, c2] = alloc(contribs, inputs.contribTiming);
+  const [t1, t2] = alloc(tax, inputs.taxTiming);
+  const g = m.gross / 2;
+
+  return {
+    scheduleLabel: `Semi-Monthly · ${labels[0].replace('Every ', '')} & ${labels[1].replace('Every ', '')}`,
+    checks: [
+      { label: labels[0], sub: '1st cutoff payout', gross: g, contribs: c1, tax: t1, net: g - c1 - t1 },
+      { label: labels[1], sub: '2nd cutoff payout', gross: g, contribs: c2, tax: t2, net: g - c2 - t2 }
+    ]
+  };
+};
+
+const peso = (n, d = 2) =>
+  `₱${(Number(n) || 0).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d })}`;
+
+// ============================================================
+// Liquid Glass UI Primitives
+// ============================================================
+const Toggle = ({ checked, onChange, isDark }) => (
+  <button
+    type="button"
+    role="switch"
+    aria-checked={checked}
+    onClick={() => onChange(!checked)}
+    className={`relative w-[44px] h-[26px] rounded-full flex-shrink-0 transition-colors duration-300 ${
+      checked ? 'bg-[#34C759]' : isDark ? 'bg-white/20' : 'bg-black/15'
+    }`}
+  >
+    <span
+      className={`absolute top-[2px] left-[2px] w-[22px] h-[22px] rounded-full bg-white shadow-[0_2px_6px_rgba(0,0,0,0.25)] transition-transform duration-300 ${
+        checked ? 'translate-x-[18px]' : 'translate-x-0'
+      }`}
+    />
+  </button>
+);
+
+const Segmented = ({ options, value, onChange, t, wrapClass }) => (
+  <div className={`${t.segTrack} ${wrapClass || 'flex items-center'}`}>
+    {options.map((o) => (
+      <button
+        key={o.id}
+        type="button"
+        onClick={() => onChange(o.id)}
+        className={`flex-1 px-2.5 py-1.5 rounded-full text-[11px] font-semibold whitespace-nowrap transition-all duration-300 active:scale-[0.97] ${
+          value === o.id ? t.segActive : t.segIdle
+        }`}
+      >
+        {o.label}
+      </button>
+    ))}
+  </div>
+);
+
+const CustomDonutChart = ({ data, t, isDark }) => {
+  const total = data.reduce((sum, item) => sum + item.value, 0);
+  let accumulatedAngle = 0;
+
+  return (
+    <div className={`flex flex-col sm:flex-row lg:flex-col items-center justify-center gap-6 p-5 h-full w-full min-w-0 ${t.panel}`}>
+      <div className="relative w-36 h-36 flex-shrink-0 flex items-center justify-center">
+        <svg viewBox="0 0 100 100" className="w-full h-full transform -rotate-90 drop-shadow-xl">
+          <circle
+            cx="50"
+            cy="50"
+            r="40"
+            fill="transparent"
+            stroke={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}
+            strokeWidth="10"
+            pathLength="100"
+          />
+          {data.map((slice, index) => {
+            if (slice.value <= 0) return null;
+            const percentage = (slice.value / total) * 100;
+            const strokeDasharray = `${percentage} 100`;
+            const strokeDashoffset = -accumulatedAngle;
+            accumulatedAngle += percentage;
+
+            return (
+              <circle
+                key={index}
+                cx="50"
+                cy="50"
+                r="40"
+                fill="transparent"
+                stroke={slice.color}
+                strokeWidth="10"
+                strokeDasharray={strokeDasharray}
+                strokeDashoffset={strokeDashoffset}
+                pathLength="100"
+                strokeLinecap="butt"
+                className="transition-all duration-500 ease-out hover:stroke-[12px] cursor-pointer"
+              />
+            );
+          })}
+          <circle cx="50" cy="50" r="30" fill={isDark ? 'rgba(28,28,30,0.5)' : 'rgba(255,255,255,0.5)'} />
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center text-center pointer-events-none">
+          <span className={`text-[9px] font-bold uppercase tracking-wider ${t.textMuted}`}>Take-Home</span>
+          <span className="text-md font-black text-[#30D158]">
+            {((data[0]?.value / total) * 100 || 0).toFixed(1)}%
+          </span>
+        </div>
+      </div>
+
+      <div className="flex-1 w-full flex flex-col gap-2 min-w-0">
+        {data.map((item, index) => (
+          <div key={index} className={`flex items-center justify-between gap-3 text-xs px-3 py-2 rounded-2xl transition-colors w-full ${t.chipRow}`}>
+            <div className="flex items-center gap-2 min-w-0 flex-1">
+              <span className="w-2.5 h-2.5 rounded-full flex-shrink-0 shadow-sm" style={{ backgroundColor: item.color }} />
+              <span className={`font-medium truncate ${t.text}`}>{item.label}</span>
+            </div>
+            <div className="text-right flex-shrink-0 pl-2">
+              <span className={`font-bold block ${t.text}`}>{peso(item.value)}</span>
+              <span className={`text-[10px] font-medium ${t.textMuted}`}>
+                {((item.value / total) * 100 || 0).toFixed(1)}%
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+// ============================================================
+// Mini-Calculator Toolkit (Calculators hub)
+// ============================================================
+const ToolShell = ({ icon: Icon, title, desc, t, children }) => (
+  <div className={`${t.card} p-6 space-y-5`}>
+    <div className={`flex items-center gap-3 border-b ${t.divider} pb-4`}>
+      <Icon className={`w-6 h-6 ${t.textAccent}`} />
+      <div>
+        <h2 className={`text-lg font-bold ${t.text}`}>{title}</h2>
+        <p className={`text-xs ${t.textMuted}`}>{desc}</p>
+      </div>
+    </div>
+    {children}
+  </div>
+);
+
+const ToolField = ({ label, value, onChange, t, prefix = '₱' }) => (
+  <div className="space-y-1.5">
+    <label className={`text-xs font-bold ${t.text}`}>{label}</label>
+    <div className="relative">
+      {prefix && <span className={`absolute left-3 top-2 text-sm font-bold ${t.textMuted}`}>{prefix}</span>}
+      <input
+        type="number"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className={`${t.input} ${prefix ? '!pl-8' : ''} !py-2 text-base font-black`}
+      />
+    </div>
+  </div>
+);
+
+const ResultLine = ({ label, value, t, accentClass, big }) => (
+  <div className="flex justify-between items-baseline gap-3">
+    <span className={`${big ? 'text-[10px] font-bold uppercase tracking-wider' : 'text-xs'} ${t.textMuted}`}>{label}</span>
+    <span className={`${big ? 'text-2xl font-black' : 'text-xs font-bold'} ${accentClass || t.text}`}>{value}</span>
+  </div>
+);
+
+const SssCalcTool = ({ t }) => {
+  const [salary, setSalary] = useState(25000);
+  const [mode, setMode] = useState('employed');
+  const d = computeSssDetails(Number(salary) || 0);
+  const ee = mode === 'employed' ? d.eeTotal : d.msc * 0.15;
+  const er = mode === 'employed' ? d.erTotal : 0;
+  return (
+    <ToolShell icon={Building2} title="SSS Contribution Calculator" desc="2026 schedule — 15% of the Monthly Salary Credit (RA 11199 final step)" t={t}>
+      <Segmented
+        options={[{ id: 'employed', label: 'Employed' }, { id: 'self', label: 'Self-Employed / Voluntary' }]}
+        value={mode}
+        onChange={setMode}
+        t={t}
+        wrapClass="flex items-center"
+      />
+      <ToolField label="Monthly Salary / Declared Income" value={salary} onChange={setSalary} t={t} />
+      <div className={`${t.panel} p-4 space-y-2.5`}>
+        <ResultLine label="Monthly Salary Credit (MSC)" value={peso(d.msc, 0)} t={t} />
+        <ResultLine label="Regular MSC portion" value={peso(Math.min(20000, d.msc), 0)} t={t} />
+        <ResultLine label="MPF / Provident portion (above ₱20k)" value={peso(Math.max(0, d.msc - 20000), 0)} t={t} />
+        <div className={`border-t ${t.divider} pt-2.5 space-y-2.5`}>
+          {mode === 'employed' ? (
+            <>
+              <ResultLine label="Employer share (10% + EC)" value={peso(er)} t={t} />
+              <ResultLine label="Your share (5%)" value={peso(ee)} t={t} accentClass="text-[#30D158]" big />
+            </>
+          ) : (
+            <ResultLine label="Your contribution (full 15%)" value={peso(ee)} t={t} accentClass="text-[#30D158]" big />
+          )}
+        </div>
+      </div>
+      <p className={`text-[10px] leading-relaxed ${t.textMuted}`}>
+        MSC range is ₱5,000–₱35,000 in ₱500 steps. The employer also shoulders the EC fee (₱10 below ₱15k MSC, ₱30 at or above).
+      </p>
+    </ToolShell>
+  );
+};
+
+const PhilhealthCalcTool = ({ t }) => {
+  const [salary, setSalary] = useState(25000);
+  const [mode, setMode] = useState('employed');
+  const base = Math.max(PHILHEALTH_MIN_SALARY, Math.min(PHILHEALTH_MAX_SALARY, Number(salary) || 0));
+  const total = base * PHILHEALTH_RATE_2026;
+  const ee = mode === 'employed' ? total / 2 : total;
+  return (
+    <ToolShell icon={HeartPulse} title="PhilHealth Contribution Calculator" desc="5% premium for 2026 — floor ₱10,000, ceiling ₱100,000" t={t}>
+      <Segmented
+        options={[{ id: 'employed', label: 'Employed (50/50)' }, { id: 'direct', label: 'Direct Contributor' }]}
+        value={mode}
+        onChange={setMode}
+        t={t}
+        wrapClass="flex items-center"
+      />
+      <ToolField label="Monthly Basic Salary" value={salary} onChange={setSalary} t={t} />
+      <div className={`${t.panel} p-4 space-y-2.5`}>
+        <ResultLine label="Premium basis (clamped)" value={peso(base, 0)} t={t} />
+        <ResultLine label="Total monthly premium (5%)" value={peso(total)} t={t} />
+        <div className={`border-t ${t.divider} pt-2.5 space-y-2.5`}>
+          {mode === 'employed' && <ResultLine label="Employer share (2.5%)" value={peso(total / 2)} t={t} />}
+          <ResultLine label={mode === 'employed' ? 'Your share (2.5%)' : 'Your premium (full 5%)'} value={peso(ee)} t={t} accentClass="text-[#30D158]" big />
+        </div>
+      </div>
+    </ToolShell>
+  );
+};
+
+const PagibigCalcTool = ({ t }) => {
+  const [salary, setSalary] = useState(25000);
+  const s = Number(salary) || 0;
+  const base = Math.min(PAGIBIG_MAX_SALARY_LIMIT, s);
+  const eeRate = s <= 1500 ? 0.01 : 0.02;
+  const ee = base * eeRate;
+  const er = base * 0.02;
+  return (
+    <ToolShell icon={Home} title="Pag-IBIG Contribution Calculator" desc="HDMF mandatory savings — Maximum Fund Salary of ₱10,000 (Circular 460)" t={t}>
+      <ToolField label="Monthly Basic Salary" value={salary} onChange={setSalary} t={t} />
+      <div className={`${t.panel} p-4 space-y-2.5`}>
+        <ResultLine label="Fund salary basis (capped)" value={peso(base, 0)} t={t} />
+        <ResultLine label={`Your rate`} value={`${(eeRate * 100).toFixed(0)}%`} t={t} />
+        <div className={`border-t ${t.divider} pt-2.5 space-y-2.5`}>
+          <ResultLine label="Employer share (2%)" value={peso(er)} t={t} />
+          <ResultLine label="Your monthly savings" value={peso(ee)} t={t} accentClass="text-[#30D158]" big />
+        </div>
+      </div>
+      <p className={`text-[10px] leading-relaxed ${t.textMuted}`}>
+        Maximum employee deduction is ₱200/month, matched by ₱200 from your employer — ₱400 total going into your Pag-IBIG savings. Want higher returns? Look at voluntary MP2 savings.
+      </p>
+    </ToolShell>
+  );
+};
+
+const TaxCalcTool = ({ t }) => {
+  const [monthlyTaxable, setMonthlyTaxable] = useState(35000);
+  const annual = (Number(monthlyTaxable) || 0) * 12;
+  const annualTax = computeAnnualTax(annual);
+  const bracket = TAX_BRACKETS.find((br) => annual <= br.upTo);
+  const effective = annual > 0 ? (annualTax / annual) * 100 : 0;
+  return (
+    <ToolShell icon={Percent} title="BIR Withholding Tax Calculator" desc="TRAIN Law graduated brackets (annualized method)" t={t}>
+      <ToolField label="Monthly Taxable Income (after SSS/PhilHealth/Pag-IBIG)" value={monthlyTaxable} onChange={setMonthlyTaxable} t={t} />
+      <div className={`${t.panel} p-4 space-y-2.5`}>
+        <ResultLine label="Annualized taxable income" value={peso(annual)} t={t} />
+        <ResultLine label="Marginal bracket rate" value={`${(bracket.rate * 100).toFixed(0)}%`} t={t} />
+        <ResultLine label="Effective tax rate" value={`${effective.toFixed(2)}%`} t={t} />
+        <ResultLine label="Annual income tax" value={peso(annualTax)} t={t} />
+        <div className={`border-t ${t.divider} pt-2.5`}>
+          <ResultLine label="Monthly withholding tax" value={peso(annualTax / 12)} t={t} accentClass="text-[#FF453A]" big />
+        </div>
+      </div>
+      <p className={`text-[10px] leading-relaxed ${t.textMuted}`}>
+        Taxable income = gross taxable pay minus mandatory contributions. For the full computation including contributions, use the main Dashboard.
+      </p>
+    </ToolShell>
+  );
+};
+
+const ThirteenthMonthTool = ({ t }) => {
+  const [basic, setBasic] = useState(25000);
+  const [months, setMonths] = useState(12);
+  const pay = ((Number(basic) || 0) * Math.min(12, Math.max(0, Number(months) || 0))) / 12;
+  const excess = Math.max(0, pay - 90000);
+  return (
+    <ToolShell icon={Gift} title="13th Month Pay Calculator" desc="PD 851 — total basic salary earned in the year ÷ 12" t={t}>
+      <div className="grid grid-cols-2 gap-3">
+        <ToolField label="Monthly Basic Salary" value={basic} onChange={setBasic} t={t} />
+        <ToolField label="Months Worked This Year" value={months} onChange={setMonths} t={t} prefix="" />
+      </div>
+      <div className={`${t.panel} p-4 space-y-2.5`}>
+        <ResultLine label="13th month pay" value={peso(pay)} t={t} accentClass="text-[#30D158]" big />
+        {excess > 0 && <ResultLine label="Taxable excess over ₱90,000 ceiling" value={peso(excess)} t={t} accentClass="text-[#FF9F0A]" />}
+      </div>
+      <p className={`text-[10px] leading-relaxed ${t.textMuted}`}>
+        Only basic salary counts — allowances, OT, and premiums are excluded. Must be paid on or before December 24. The ₱90,000 tax-free ceiling covers 13th month pay plus other bonuses combined.
+      </p>
+    </ToolShell>
+  );
+};
+
+const PREMIUM_TYPES = [
+  { id: 'ot', label: 'Overtime — ordinary day (125%)', mult: 1.25 },
+  { id: 'rest', label: 'Rest day / special day, first 8h (130%)', mult: 1.3 },
+  { id: 'restOt', label: 'Overtime on rest day (169%)', mult: 1.69 },
+  { id: 'regHol', label: 'Regular holiday, first 8h (200%)', mult: 2.0 },
+  { id: 'regHolOt', label: 'Overtime on regular holiday (260%)', mult: 2.6 },
+  { id: 'nd', label: 'Night differential, 10PM–6AM (+10%)', mult: 1.1 }
+];
+
+const PremiumPayTool = ({ t }) => {
+  const [hourly, setHourly] = useState(180);
+  const [hours, setHours] = useState(2);
+  const [typeId, setTypeId] = useState('ot');
+  const type = PREMIUM_TYPES.find((p) => p.id === typeId);
+  const pay = (Number(hourly) || 0) * type.mult * (Number(hours) || 0);
+  return (
+    <ToolShell icon={Clock} title="Overtime & Premium Pay Calculator" desc="DOLE standard multipliers for OT, rest days, holidays & night work" t={t}>
+      <div className="grid grid-cols-2 gap-3">
+        <ToolField label="Hourly Rate" value={hourly} onChange={setHourly} t={t} />
+        <ToolField label="Hours Worked" value={hours} onChange={setHours} t={t} prefix="" />
+      </div>
+      <div className="space-y-1.5">
+        <label className={`text-xs font-bold ${t.text}`}>Premium Type</label>
+        <select value={typeId} onChange={(e) => setTypeId(e.target.value)} className={`${t.select} w-full py-2 px-3`}>
+          {PREMIUM_TYPES.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+        </select>
+      </div>
+      <div className={`${t.panel} p-4 space-y-2.5`}>
+        <ResultLine label="Formula" value={`${peso(Number(hourly) || 0)} × ${type.mult} × ${Number(hours) || 0}h`} t={t} />
+        <div className={`border-t ${t.divider} pt-2.5`}>
+          <ResultLine label="Premium pay" value={peso(pay)} t={t} accentClass="text-[#30D158]" big />
+        </div>
+      </div>
+      <p className={`text-[10px] leading-relaxed ${t.textMuted}`}>
+        Tip: hourly rate = (monthly salary × 12) ÷ working days per year ÷ 8. Use the Rate Converter tool to get it.
+      </p>
+    </ToolShell>
+  );
+};
+
+const RateConverterTool = ({ t }) => {
+  const [monthly, setMonthly] = useState(25000);
+  const [days, setDays] = useState(261);
+  const m = Number(monthly) || 0;
+  const daily = (m * 12) / days;
+  return (
+    <ToolShell icon={Repeat} title="Salary Rate Converter" desc="Monthly ⇆ daily ⇆ hourly equivalents (DOLE divisor method)" t={t}>
+      <div className="grid grid-cols-2 gap-3 items-end">
+        <ToolField label="Monthly Salary" value={monthly} onChange={setMonthly} t={t} />
+        <div className="space-y-1.5">
+          <label className={`text-xs font-bold ${t.text}`}>Working Days / Year</label>
+          <select value={days} onChange={(e) => setDays(Number(e.target.value))} className={`${t.select} w-full !py-2 px-3`}>
+            <option value="261">261 (Mon–Fri)</option>
+            <option value="313">313 (Mon–Sat)</option>
+            <option value="365">365 (Daily paid)</option>
+          </select>
+        </div>
+      </div>
+      <div className={`${t.panel} p-4 space-y-2.5`}>
+        <ResultLine label="Annual" value={peso(m * 12)} t={t} />
+        <ResultLine label="Weekly" value={peso((m * 12) / 52)} t={t} />
+        <ResultLine label="Daily rate" value={peso(daily)} t={t} />
+        <div className={`border-t ${t.divider} pt-2.5`}>
+          <ResultLine label="Hourly rate (8h day)" value={peso(daily / 8)} t={t} accentClass="text-[#30D158]" big />
+        </div>
+      </div>
+    </ToolShell>
+  );
+};
+
+const NegotiatorTool = ({ baseInputs, onApply, t }) => {
+  const [targetNet, setTargetNet] = useState(30000);
+  const resolved = solveGrossFromNet2026(Number(targetNet) || 0, baseInputs);
+  const check = calculatePayroll2026({ ...baseInputs, basicSalary: resolved });
+  return (
+    <ToolShell icon={TrendingUp} title="Salary Negotiator & Solver" desc="Reverse-solve the base contract wage required to hit your target net take-home" t={t}>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
+        <div className="space-y-4">
+          <ToolField label="Target Monthly Net Take-Home Pay" value={targetNet} onChange={setTargetNet} t={t} />
+          <div className={`${t.panel} p-4 text-[11px] leading-relaxed space-y-1.5 ${t.textMuted}`}>
+            <p className={`font-bold ${t.text}`}>How this works:</p>
+            A bisection algorithm iteratively tests gross values until the computed net converges on your target — factoring in SSS, PhilHealth, Pag-IBIG brackets, and BIR tax ranges.
+          </div>
+        </div>
+
+        <div className={`${t.panel} p-6 text-center space-y-4`}>
+          <span className={`text-[10px] font-bold uppercase tracking-wider block ${t.textAccent}`}>Required Base Contract Salary</span>
+          <div>
+            <span className={`text-3xl font-black block tracking-tight ${t.text}`}>{peso(resolved)}</span>
+            <span className={`text-xs ${t.textMuted}`}>Gross Monthly Salary</span>
+          </div>
+
+          <div className={`border-t ${t.divider} pt-3 space-y-1 text-xs text-left ${t.textMuted}`}>
+            <div className="flex justify-between">
+              <span>Tax Withheld:</span>
+              <span className={`font-bold ${t.text}`}>{peso(check.monthly.tax)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>EE Contribution Overhead:</span>
+              <span className={`font-bold ${t.text}`}>{peso(check.monthly.deductions)}</span>
+            </div>
+          </div>
+
+          <button
+            onClick={() => onApply(resolved)}
+            className={`${t.primaryBtn} w-full py-2.5 text-xs flex items-center justify-center gap-1.5`}
+          >
+            Apply to Dashboard <ArrowRight className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+    </ToolShell>
+  );
+};
+
+const CALCULATORS = [
+  { id: 'negotiator', name: 'Salary Negotiator', desc: 'Reverse-solve the gross salary you need for a target net take-home.', icon: TrendingUp },
+  { id: 'sss', name: 'SSS Contribution', desc: '2026 employee & employer shares from your monthly salary.', icon: Building2 },
+  { id: 'philhealth', name: 'PhilHealth Contribution', desc: '5% premium with the ₱10k floor and ₱100k ceiling.', icon: HeartPulse },
+  { id: 'pagibig', name: 'Pag-IBIG Contribution', desc: 'HDMF savings on the ₱10,000 maximum fund salary.', icon: Home },
+  { id: 'tax', name: 'BIR Withholding Tax', desc: 'TRAIN-law tax from your monthly taxable income.', icon: Percent },
+  { id: 'thirteenth', name: '13th Month Pay', desc: 'Prorated 13th month pay and the ₱90k tax-free ceiling.', icon: Gift },
+  { id: 'premium', name: 'Overtime & Premium Pay', desc: 'OT, rest day, holiday, and night differential multipliers.', icon: Clock },
+  { id: 'rates', name: 'Rate Converter', desc: 'Monthly, daily, hourly, and weekly rate equivalents.', icon: Repeat }
+];
+
+// ============================================================
+// Government Agency Directory (hotlines verified June 2026)
+// ============================================================
+const DIRECTORY = [
+  {
+    id: 'sss',
+    name: 'Social Security System',
+    short: 'SSS',
+    icon: Building2,
+    color: '#0A84FF',
+    tagline: 'Pension, sickness, maternity, unemployment, and loan benefits for private-sector workers.',
+    hotline: '1455',
+    hotlineNote: 'SSS Hotline',
+    website: 'https://www.sss.gov.ph',
+    portal: { label: 'My.SSS Member Portal', url: 'https://member.sss.gov.ph' },
+    services: ['Contributions', 'Salary Loan', 'Maternity Benefit', 'Sickness Benefit', 'Unemployment', 'Retirement Pension']
+  },
+  {
+    id: 'philhealth',
+    name: 'PhilHealth',
+    short: 'PHIC',
+    icon: HeartPulse,
+    color: '#30D158',
+    tagline: 'National health insurance — hospitalization, outpatient, and Konsulta benefit coverage.',
+    hotline: '(02) 8662-2588',
+    hotlineNote: '24/7 Action Center',
+    website: 'https://www.philhealth.gov.ph',
+    portal: { label: 'Member Portal', url: 'https://memberinquiry.philhealth.gov.ph/member' },
+    services: ['Premium Contributions', 'Konsulta', 'Hospital Benefits', 'MDR & PIN', 'Case Rates']
+  },
+  {
+    id: 'pagibig',
+    name: 'Pag-IBIG Fund (HDMF)',
+    short: 'HDMF',
+    icon: Home,
+    color: '#FF9F0A',
+    tagline: 'Mandatory savings, MP2 dividends, and the country’s largest affordable housing loan program.',
+    hotline: '(02) 8724-4244',
+    hotlineNote: '24/7 Hotline',
+    website: 'https://www.pagibigfund.gov.ph',
+    portal: { label: 'Virtual Pag-IBIG', url: 'https://www.pagibigfundservices.com/virtualpagibig/' },
+    services: ['Regular Savings', 'MP2 Savings', 'Multi-Purpose Loan', 'Calamity Loan', 'Housing Loan']
+  },
+  {
+    id: 'dole',
+    name: 'Department of Labor & Employment',
+    short: 'DOLE',
+    icon: HardHat,
+    color: '#FF453A',
+    tagline: 'Labor standards enforcement, wage disputes, final pay complaints, and worker programs.',
+    hotline: '1349',
+    hotlineNote: '24/7 weekdays · Sat 6AM–10PM',
+    website: 'https://www.dole.gov.ph',
+    portal: { label: 'hotline1349@dole.gov.ph', url: 'mailto:hotline1349@dole.gov.ph' },
+    services: ['Labor Complaints', 'Final Pay Disputes', 'SEnA Mediation', 'OSH Standards', 'Employment Programs']
+  }
+];
+
+// ============================================================
+// Guides Library
+// ============================================================
+const buildGuides = (t) => [
+  {
+    id: 'payslip',
+    title: 'How to Read Your Payslip',
+    summary: 'Gross pay, cutoffs, deduction timing, and where your money actually goes.',
+    icon: Wallet,
+    body: (
+      <>
+        <p>Your payslip starts with <strong>gross pay</strong> (basic + allowances + overtime + premiums), subtracts <strong>mandatory contributions</strong> (SSS, PhilHealth, Pag-IBIG), then <strong>withholding tax</strong> on what remains — what's left is your net take-home.</p>
+        <p>Most employers pay <strong>semi-monthly</strong> (every 15th & 30th, or 5th & 20th). Contributions and tax don't have to be split evenly: many companies take government contributions on one cutoff and tax on the other, which is why your two paychecks can differ even on the same salary.</p>
+        <p>Use the <strong>Payday Breakdown</strong> on the Dashboard to mirror your employer's exact timing.</p>
+      </>
+    )
+  },
+  {
+    id: 'sss',
+    title: 'SSS Contributions Explained (2026)',
+    summary: 'The 15% rate, MSC brackets, and the MPF provident fund.',
+    icon: Building2,
+    body: (
+      <>
+        <p>Since January 2026, the SSS rate is <strong>15% of your Monthly Salary Credit (MSC)</strong> — the final increase under RA 11199. You pay 5%, your employer pays 10% plus the EC fee (₱10–₱30).</p>
+        <p>Your MSC is your salary rounded to the nearest ₱500, clamped between <strong>₱5,000 and ₱35,000</strong>. Anything credited above ₱20,000 MSC goes to the <strong>Mandatory Provident Fund (MPF)</strong> — an individual investment account on top of the regular pension.</p>
+        <p>Self-employed, voluntary, and OFW members shoulder the full 15% themselves. Kasambahay earning below ₱5,000/month have their full contribution paid by the employer.</p>
+      </>
+    )
+  },
+  {
+    id: 'philhealth',
+    title: 'PhilHealth Premiums Explained',
+    summary: 'The 5% rate, the ₱10k–₱100k corridor, and who pays what.',
+    icon: HeartPulse,
+    body: (
+      <>
+        <p>The premium is <strong>5% of your monthly basic salary</strong> — the final rate under the Universal Health Care Act, confirmed retained for 2026.</p>
+        <p>The salary basis has a <strong>floor of ₱10,000</strong> (minimum premium ₱500) and a <strong>ceiling of ₱100,000</strong> (maximum ₱5,000). Employed members split it 50/50 with their employer — 2.5% each. Self-employed "direct contributors" pay the full 5%.</p>
+        <p>Keep your MDR (Member Data Record) updated — it's the document hospitals check when applying your benefits.</p>
+      </>
+    )
+  },
+  {
+    id: 'pagibig',
+    title: 'Pag-IBIG (HDMF) Explained',
+    summary: 'The ₱200 cap, employer matching, and why MP2 is worth a look.',
+    icon: Home,
+    body: (
+      <>
+        <p>Pag-IBIG is a <strong>savings program</strong>, not a fee — your money earns dividends and comes back to you. The mandatory rate is 2% of your salary (1% if you earn ₱1,500 or less), computed on a <strong>Maximum Fund Salary of ₱10,000</strong>, so the most you'll be deducted is <strong>₱200/month</strong>, matched by ₱200 from your employer.</p>
+        <p>Membership unlocks the <strong>Multi-Purpose Loan</strong>, <strong>Calamity Loan</strong>, and the country's largest <strong>housing loan</strong> program.</p>
+        <p>If you can save more, <strong>MP2</strong> is a voluntary 5-year savings program with historically higher tax-free dividends than banks.</p>
+      </>
+    )
+  },
+  {
+    id: 'tax',
+    title: 'BIR Withholding Tax & TRAIN Brackets',
+    summary: 'The graduated table and how the annualized method works.',
+    icon: Percent,
+    body: (
+      <>
+        <p>Withholding tax uses the <strong>TRAIN Law graduated brackets</strong> (Phase 2, effective 2023 — unchanged for 2026). Tax applies to your gross taxable pay <strong>after</strong> mandatory contributions are subtracted. Annual taxable income up to ₱250,000 is fully exempt.</p>
+        <div className={`overflow-x-auto ${t.panel} !rounded-xl mt-2`}>
+          <table className="w-full text-left text-[11px] border-collapse">
+            <thead>
+              <tr className={`border-b ${t.divider} uppercase tracking-wider text-[9px] ${t.textMuted}`}>
+                <th className="py-2 px-3">Annual Taxable Income</th>
+                <th className="py-2 px-3">Tax Due</th>
+              </tr>
+            </thead>
+            <tbody className={`divide-y ${t.divider}`}>
+              <tr><td className="py-2 px-3">₱0 – ₱250,000</td><td className="py-2 px-3">0%</td></tr>
+              <tr><td className="py-2 px-3">₱250,001 – ₱400,000</td><td className="py-2 px-3">15% of excess over ₱250k</td></tr>
+              <tr><td className="py-2 px-3">₱400,001 – ₱800,000</td><td className="py-2 px-3">₱22,500 + 20% over ₱400k</td></tr>
+              <tr><td className="py-2 px-3">₱800,001 – ₱2,000,000</td><td className="py-2 px-3">₱102,500 + 25% over ₱800k</td></tr>
+              <tr><td className="py-2 px-3">₱2,000,001 – ₱8,000,000</td><td className="py-2 px-3">₱402,500 + 30% over ₱2M</td></tr>
+              <tr><td className="py-2 px-3">Above ₱8,000,000</td><td className="py-2 px-3">₱2,202,500 + 35% over ₱8M</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Employers withhold per payroll period by annualizing your taxable income, computing the annual tax, and dividing it back across pay periods — which is what this app does.</p>
+      </>
+    )
+  },
+  {
+    id: 'thirteenth',
+    title: '13th Month Pay Rules',
+    summary: 'Who gets it, how it’s computed, and the ₱90k tax-free ceiling.',
+    icon: Gift,
+    body: (
+      <>
+        <p>Under <strong>PD 851</strong>, all rank-and-file employees who worked at least one month in the calendar year are entitled to 13th month pay, regardless of position or how they're paid.</p>
+        <p>The formula: <strong>total basic salary earned during the year ÷ 12</strong>. Allowances, overtime, and premiums are excluded. It must be paid <strong>on or before December 24</strong>.</p>
+        <p>13th month pay and other bonuses are <strong>tax-free up to ₱90,000 combined</strong> per year — only the excess is added to taxable income.</p>
+      </>
+    )
+  },
+  {
+    id: 'smwe',
+    title: 'Minimum Wage Earner Tax Exemption',
+    summary: 'SMWEs pay zero income tax — including on OT and night diff.',
+    icon: ShieldCheck,
+    body: (
+      <>
+        <p>Statutory Minimum Wage Earners (SMWEs) are <strong>fully exempt from income tax</strong> under the TRAIN Law (RR 11-2018) — covering basic pay, overtime, holiday pay, night shift differential, and hazard pay.</p>
+        <p>Minimum wage rates differ per region and are set by the Regional Tripartite Wages and Productivity Boards — check the current rate for your region on the DOLE website (see Directory).</p>
+        <p>Note that SSS, PhilHealth, and Pag-IBIG contributions still apply; only the income tax is waived. Toggle "Statutory Minimum Wage Earner" on the Dashboard to model this.</p>
+      </>
+    )
+  },
+  {
+    id: 'kasambahay',
+    title: 'Kasambahay Employer Basics',
+    summary: 'RA 10361 — who shoulders contributions for household workers.',
+    icon: Home,
+    body: (
+      <>
+        <p>Under the <strong>Kasambahay Law (RA 10361)</strong>, household employers must register their kasambahay with SSS, PhilHealth, and Pag-IBIG.</p>
+        <p>If the kasambahay earns <strong>less than ₱5,000/month</strong>, the employer shoulders <strong>100% of all contributions</strong> — nothing is deducted from the worker's pay. At ₱5,000 and above, the normal employee/employer sharing applies.</p>
+        <p>Kasambahay are also entitled to 13th month pay, weekly rest day, 5 days service incentive leave after a year, and a written employment contract. The Dashboard's "Kasambahay" mode models the contribution rules automatically.</p>
+      </>
+    )
+  }
+];
+
+// ============================================================
+// Agency Newsroom
+// ------------------------------------------------------------
+// Pulls live headlines per agency from Google News RSS through
+// a CORS relay. If the relay or feed is unreachable, it falls
+// back to curated headlines bundled with the app (update these
+// on redeploy). No backend required.
+// ============================================================
+const NEWS_AGENCIES = [
+  { id: 'sss', label: 'SSS', color: '#0A84FF', q: '"Social Security System" SSS Philippines when:30d' },
+  { id: 'philhealth', label: 'PhilHealth', color: '#30D158', q: 'PhilHealth Philippines when:30d' },
+  { id: 'pagibig', label: 'Pag-IBIG', color: '#FF9F0A', q: '"Pag-IBIG Fund" Philippines when:30d' },
+  { id: 'dole', label: 'DOLE', color: '#FF453A', q: 'DOLE "Department of Labor and Employment" Philippines when:30d' }
+];
+
+const FALLBACK_NEWS = [
+  { agency: 'sss', title: 'SSS begins early June rollout of 2026 pension hike, citing need for early relief for pensioners', source: 'SSS', date: '2026-06-02', url: 'https://www.sss.gov.ph/news-and-updates/sss-begins-early-june-rollout-of-2026-pension-hike-citing-need-for-early-relief-for-pensioners/' },
+  { agency: 'sss', title: 'New SSS pensioners to receive pension hike by September', source: 'Inquirer', date: '2026-06-05', url: 'https://newsinfo.inquirer.net/2240751/new-pensioners-not-yet-included-in-sss-advanced-pension-hike-this-june' },
+  { agency: 'sss', title: 'SSS pension increase this June 2026: How much more will you receive?', source: 'Cebu Daily News', date: '2026-06-03', url: 'https://cebudailynews.inquirer.net/729858/sss-pension-increase-this-june-2026-how-much-more-will-you-receive' },
+  { agency: 'philhealth', title: 'PhilHealth eyes overhaul to cut health costs', source: 'Context.ph', date: '2026-06-11', url: 'https://context.ph/2026/06/11/philhealth-eyes-overhaul-to-cut-health-costs/' },
+  { agency: 'philhealth', title: 'PhilHealth seeks stable funding as UHC expansion raises budget needs', source: 'Manila Times', date: '2026-06-11', url: 'https://www.manilatimes.net/2026/06/11/news/national/philhealth-seeks-stable-funding-as-uhc-expansion-raises-budget-needs/2363775' },
+  { agency: 'philhealth', title: 'PhilHealth budget triples after ₱60-B fund return, benefits expanded', source: 'PNA', date: '2026-06-08', url: 'https://www.pna.gov.ph/articles/1274889' },
+  { agency: 'pagibig', title: 'Pag-IBIG: ₱32.92B in home loans released in Q1 2026, up 9%', source: 'GMA News', date: '2026-04-28', url: 'https://www.gmanetwork.com/news/money/economy/985663/pag-ibig-fund-home-loans-1st-quarter-2026/story/' },
+  { agency: 'pagibig', title: 'Pag-IBIG Fund home loan releases grow 9% to ₱32.92B in Q1 2026', source: 'BusinessMirror', date: '2026-04-28', url: 'https://businessmirror.com.ph/2026/04/28/pag-ibig-fund-home-loan-releases-grow-9-to-p32-92b-in-q1-2026/' },
+  { agency: 'dole', title: 'Wage hikes across the regions — 2nd tranche for Regions VIII & IX effective June 1', source: 'DOLE', date: '2026-06-01', url: 'https://dole.gov.ph/news/wage-hikes-across-the-regions/' },
+  { agency: 'dole', title: 'Over 4.5M workers benefit from wage hikes in 14 regions', source: 'PNA', date: '2026-05-20', url: 'https://www.pna.gov.ph/articles/1266025' },
+  { agency: 'dole', title: 'Philippines minimum wage rates, ranked from highest to lowest', source: 'GMA News', date: '2026-05-28', url: 'https://www.gmanetwork.com/news/topstories/nation/986075/how-much-philippines-minimum-wage-rates-ranked-from-highest-to-lowest/story/' }
+];
+
+const fetchWithTimeout = (url, ms) => {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  return fetch(url, { signal: ctrl.signal }).finally(() => clearTimeout(timer));
+};
+
+const fetchAgencyNews = async (agency) => {
+  const rss = `https://news.google.com/rss/search?q=${encodeURIComponent(agency.q)}&hl=en-PH&gl=PH&ceid=PH:en`;
+  // Try our own Vercel function first (fast, edge-cached, first-party),
+  // then public CORS relays. If everything fails the caller falls back
+  // to the bundled headlines.
+  const attempts = [
+    `/api/news?q=${encodeURIComponent(agency.q)}`,
+    `https://corsproxy.io/?url=${encodeURIComponent(rss)}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(rss)}`
+  ];
+  let lastError = new Error('no relay available');
+  for (const attempt of attempts) {
+    try {
+      const res = await fetchWithTimeout(attempt, 8000);
+      if (!res.ok) throw new Error(`relay status ${res.status}`);
+      const xml = new DOMParser().parseFromString(await res.text(), 'text/xml');
+      const items = Array.from(xml.querySelectorAll('item')).slice(0, 8).map((item) => {
+        const rawTitle = (item.querySelector('title') || {}).textContent || '';
+        const sourceEl = item.querySelector('source');
+        return {
+          agency: agency.id,
+          title: rawTitle.replace(/ - [^-]+$/, ''),
+          url: ((item.querySelector('link') || {}).textContent || '').trim(),
+          date: (item.querySelector('pubDate') || {}).textContent || '',
+          source: sourceEl ? sourceEl.textContent : 'Google News'
+        };
+      }).filter((a) => a.title && a.url);
+      if (items.length) return items;
+      throw new Error('empty feed');
+    } catch (e) {
+      lastError = e;
+    }
+  }
+  throw lastError;
+};
+
+const NewsTab = ({ t, isDark }) => {
+  const [filter, setFilter] = useState('all');
+  const [articles, setArticles] = useState(null);
+  const [isLive, setIsLive] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const results = await Promise.allSettled(NEWS_AGENCIES.map((a) => fetchAgencyNews(a)));
+        if (cancelled) return;
+        const ok = results.filter((r) => r.status === 'fulfilled').flatMap((r) => r.value);
+        if (ok.length) {
+          ok.sort((a, b) => new Date(b.date) - new Date(a.date));
+          setArticles(ok);
+          setIsLive(true);
+        } else {
+          setArticles(FALLBACK_NEWS);
+        }
+      } catch (e) {
+        if (!cancelled) setArticles(FALLBACK_NEWS);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const shown = (articles || []).filter((a) => filter === 'all' || a.agency === filter);
+  const agencyOf = (id) => NEWS_AGENCIES.find((n) => n.id === id) || { label: id, color: '#8E8E93' };
+  const fmtDate = (d) => {
+    const dt = new Date(d);
+    return isNaN(dt.getTime()) ? '' : dt.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' });
+  };
+
+  return (
+    <div className="max-w-3xl mx-auto space-y-4">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-2">
+          <Newspaper className={`w-5 h-5 ${t.textAccent}`} />
+          <div>
+            <h2 className={`text-lg font-bold ${t.text}`}>Agency Newsroom</h2>
+            <p className={`text-xs ${t.textMuted}`}>Latest updates from SSS, PhilHealth, Pag-IBIG & DOLE</p>
+          </div>
+        </div>
+        {articles && (
+          <span className={`flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full border ${isLive ? (isDark ? 'bg-[#30D158]/15 text-[#30D158] border-[#30D158]/30' : 'bg-[#34C759]/10 text-[#1e9e4a] border-[#34C759]/25') : (isDark ? 'bg-white/[0.07] text-white/60 border-white/15' : 'bg-white/70 text-black/50 border-white/80')}`}>
+            <Rss className="w-3 h-3" /> {isLive ? 'Live feed' : 'Saved headlines'}
+          </span>
+        )}
+      </div>
+
+      <Segmented
+        options={[{ id: 'all', label: 'All' }, ...NEWS_AGENCIES.map((n) => ({ id: n.id, label: n.label }))]}
+        value={filter}
+        onChange={setFilter}
+        t={t}
+        wrapClass="flex items-center flex-wrap"
+      />
+
+      {!articles ? (
+        <div className="space-y-3">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className={`${t.card} p-5 animate-pulse`}>
+              <div className={`h-3 w-2/3 rounded-full mb-2 ${isDark ? 'bg-white/10' : 'bg-black/10'}`} />
+              <div className={`h-2.5 w-1/3 rounded-full ${isDark ? 'bg-white/10' : 'bg-black/10'}`} />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {shown.map((a, i) => {
+            const ag = agencyOf(a.agency);
+            return (
+              <a
+                key={i}
+                href={a.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={`${t.card} p-5 flex items-start gap-3 transition-all hover:scale-[1.008] active:scale-[0.995]`}
+              >
+                <span className="w-2.5 h-2.5 rounded-full mt-1.5 flex-shrink-0 shadow-sm" style={{ backgroundColor: ag.color }} />
+                <div className="min-w-0 flex-1">
+                  <h3 className={`text-sm font-bold leading-snug ${t.text}`}>{a.title}</h3>
+                  <p className={`text-[10px] mt-1.5 font-semibold ${t.textMuted}`}>
+                    <span style={{ color: ag.color }}>{ag.label}</span>
+                    {' · '}{a.source}{fmtDate(a.date) ? ` · ${fmtDate(a.date)}` : ''}
+                  </p>
+                </div>
+                <ExternalLink className={`w-3.5 h-3.5 flex-shrink-0 mt-1 ${t.textMuted}`} />
+              </a>
+            );
+          })}
+          {!shown.length && (
+            <div className={`${t.card} p-8 text-center text-xs ${t.textMuted}`}>No recent headlines for this agency.</div>
+          )}
+        </div>
+      )}
+
+      <p className={`text-[10px] text-center ${t.textMuted}`}>
+        Headlines link to their original publishers. SahodKo does not author or endorse external news content.
+      </p>
+    </div>
+  );
+};
+
+// ============================================================
+// Contact form (Web3Forms)
+// ------------------------------------------------------------
+// Get a free access key in seconds at https://web3forms.com
+// (just enter your email — no account needed). Paste it below.
+// Submissions are emailed to that address; nothing is stored here.
+// ============================================================
+const WEB3FORMS_ACCESS_KEY = '69c20bd2-4a2f-41e7-87dd-64723631b031';
+// Web3Forms' shared hCaptcha sitekey — works out of the box; Web3Forms
+// verifies the token server-side, so no separate hCaptcha account needed.
+const HCAPTCHA_SITEKEY = '50b2fe65-b00b-4b9e-ad62-3ba471098be2';
+
+const ContactTab = ({ t, isDark }) => {
+  const [form, setForm] = useState({
+    firstName: '', lastName: '', organization: '', phone: '', email: '', message: ''
+  });
+  const [status, setStatus] = useState('idle'); // idle | sending | success | error
+  const [errorMsg, setErrorMsg] = useState('');
+  const [captchaToken, setCaptchaToken] = useState('');
+  const captchaRef = useRef(null);
+  const widgetId = useRef(null);
+
+  const set = (k) => (e) => setForm((p) => ({ ...p, [k]: e.target.value }));
+  const keyMissing = !WEB3FORMS_ACCESS_KEY || WEB3FORMS_ACCESS_KEY === 'YOUR_WEB3FORMS_ACCESS_KEY';
+
+  // Render the hCaptcha widget once its script is ready; re-render on
+  // theme change so the widget matches light/dark.
+  useEffect(() => {
+    let cancelled = false;
+    let tries = 0;
+    const mount = () => {
+      if (cancelled) return;
+      if (!window.hcaptcha || !window.hcaptcha.render) {
+        if (tries++ < 60) setTimeout(mount, 250);
+        return;
+      }
+      if (!captchaRef.current) return;
+      captchaRef.current.innerHTML = ''; // clear any prior widget (theme swap)
+      widgetId.current = null;
+      setCaptchaToken('');
+      try {
+        widgetId.current = window.hcaptcha.render(captchaRef.current, {
+          sitekey: HCAPTCHA_SITEKEY,
+          theme: isDark ? 'dark' : 'light',
+          callback: (token) => setCaptchaToken(token),
+          'expired-callback': () => setCaptchaToken(''),
+          'error-callback': () => setCaptchaToken('')
+        });
+      } catch (e) {
+        /* widget already rendered or script hiccup — ignore */
+      }
+    };
+    mount();
+    return () => { cancelled = true; };
+  }, [isDark]);
+
+  const resetCaptcha = () => {
+    setCaptchaToken('');
+    try {
+      if (window.hcaptcha && widgetId.current !== null) window.hcaptcha.reset(widgetId.current);
+    } catch (e) { /* noop */ }
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (keyMissing) {
+      setStatus('error');
+      setErrorMsg('The contact form is not configured yet (missing Web3Forms access key).');
+      return;
+    }
+    if (!captchaToken) {
+      setStatus('error');
+      setErrorMsg('Please complete the captcha below to verify you are human.');
+      return;
+    }
+    setStatus('sending');
+    setErrorMsg('');
+    try {
+      const res = await fetch('https://api.web3forms.com/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          access_key: WEB3FORMS_ACCESS_KEY,
+          subject: `SahodKo Contact — ${form.firstName} ${form.lastName}`.trim(),
+          from_name: 'SahodKo Contact Form',
+          name: `${form.firstName} ${form.lastName}`.trim(),
+          'First Name': form.firstName,
+          'Last Name': form.lastName,
+          Organization: form.organization,
+          'Phone Number': form.phone,
+          email: form.email,
+          Message: form.message,
+          'h-captcha-response': captchaToken
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setStatus('success');
+        setForm({ firstName: '', lastName: '', organization: '', phone: '', email: '', message: '' });
+        resetCaptcha();
+      } else {
+        setStatus('error');
+        setErrorMsg(data.message || 'Something went wrong. Please try again.');
+        resetCaptcha();
+      }
+    } catch (err) {
+      setStatus('error');
+      setErrorMsg('Network error. Please check your connection and try again.');
+      resetCaptcha();
+    }
+  };
+
+  const labelCls = `text-[10px] font-bold uppercase tracking-widest ${t.textMuted}`;
+  const FieldIcon = ({ icon: Icon }) => <Icon className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${t.textMuted}`} />;
+
+  if (status === 'success') {
+    return (
+      <div className="max-w-xl mx-auto">
+        <div className={`${t.card} p-8 text-center space-y-4`}>
+          <div className={`mx-auto w-16 h-16 rounded-full flex items-center justify-center ${isDark ? 'bg-[#30D158]/15' : 'bg-[#34C759]/12'}`}>
+            <CheckCircle2 className="w-9 h-9 text-[#30D158]" />
+          </div>
+          <h2 className={`text-xl font-black ${t.text}`}>Message sent!</h2>
+          <p className={`text-xs ${t.textMuted}`}>Thanks for reaching out — we'll get back to you at the email you provided. Salamat!</p>
+          <button onClick={() => setStatus('idle')} className={`${t.primaryBtn} px-5 py-2.5 text-xs`}>
+            Send another message
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-2xl mx-auto space-y-4">
+      <div className="flex items-center gap-2">
+        <Mail className={`w-5 h-5 ${t.textAccent}`} />
+        <div>
+          <h2 className={`text-lg font-bold ${t.text}`}>Contact Us</h2>
+          <p className={`text-xs ${t.textMuted}`}>Questions, feedback, or partnership ideas? Send us a message.</p>
+        </div>
+      </div>
+
+      <form onSubmit={handleSubmit} className={`${t.card} p-6 space-y-4`}>
+        {/* Honeypot anti-spam field — hidden from humans */}
+        <input type="checkbox" name="botcheck" tabIndex={-1} autoComplete="off" className="hidden" aria-hidden="true" />
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <label className={labelCls}>First Name *</label>
+            <div className="relative">
+              <FieldIcon icon={User} />
+              <input type="text" required value={form.firstName} onChange={set('firstName')} placeholder="Juan" className={`${t.input} !pl-9 !py-2.5`} />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <label className={labelCls}>Last Name *</label>
+            <div className="relative">
+              <FieldIcon icon={User} />
+              <input type="text" required value={form.lastName} onChange={set('lastName')} placeholder="Dela Cruz" className={`${t.input} !pl-9 !py-2.5`} />
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-1.5">
+          <label className={labelCls}>Organization</label>
+          <div className="relative">
+            <FieldIcon icon={Building2} />
+            <input type="text" value={form.organization} onChange={set('organization')} placeholder="Company or organization (optional)" className={`${t.input} !pl-9 !py-2.5`} />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <label className={labelCls}>Phone Number</label>
+            <div className="relative">
+              <FieldIcon icon={Phone} />
+              <input type="tel" value={form.phone} onChange={set('phone')} placeholder="+63 9XX XXX XXXX" className={`${t.input} !pl-9 !py-2.5`} />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <label className={labelCls}>Email Address *</label>
+            <div className="relative">
+              <FieldIcon icon={Mail} />
+              <input type="email" required value={form.email} onChange={set('email')} placeholder="you@email.com" className={`${t.input} !pl-9 !py-2.5`} />
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-1.5">
+          <label className={labelCls}>Message *</label>
+          <div className="relative">
+            <MessageSquare className={`absolute left-3 top-3 w-4 h-4 ${t.textMuted}`} />
+            <textarea required rows={5} value={form.message} onChange={set('message')} placeholder="How can we help?" className={`${t.input} !pl-9 !py-2.5 resize-y`} />
+          </div>
+        </div>
+
+        <div ref={captchaRef} className="min-h-[78px] flex items-center" />
+
+        {status === 'error' && (
+          <div className={`flex items-start gap-2 text-[11px] font-semibold p-3 rounded-xl ${isDark ? 'bg-[#FF453A]/15 text-[#FF6961]' : 'bg-[#FF3B30]/10 text-[#D70015]'}`}>
+            <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+            <span>{errorMsg}</span>
+          </div>
+        )}
+
+        <button
+          type="submit"
+          disabled={status === 'sending'}
+          className={`${t.primaryBtn} w-full py-3 text-sm flex items-center justify-center gap-2 ${status === 'sending' ? 'opacity-70 cursor-wait' : ''}`}
+        >
+          {status === 'sending' ? 'Sending…' : <>Send Message <Send className="w-4 h-4" /></>}
+        </button>
+
+        <p className={`text-[10px] text-center ${t.textMuted}`}>
+          Your details are sent securely via Web3Forms and used only to reply to you. We never sell or share your information.
+        </p>
+      </form>
+    </div>
+  );
+};
+
+// ============================================================
+// Main App
+// ============================================================
+const DEFAULT_INPUTS = {
+  employmentType: 'private',
+  basicSalary: 38000,
+  taxableAllowances: 1500,
+  nonTaxableAllowances: 2000,
+  overtimePay: 0,
+  holidayNightDiff: 0,
+  absencesTardiness: 0,
+  isSmwe: false,
+  workingDaysPerYear: 261,
+  useNightDiff: false,
+  shiftStart: '21:00',
+  shiftEnd: '06:00',
+  nightDiffRate: 10,
+  ndBreakHours: 0,
+  payoutSchedule: 'semi1530',
+  contribTiming: 'split',
+  taxTiming: 'split',
+  weeklyTiming: 'split',
+  overrideSss: false,
+  customSssEE: 0,
+  overridePhilhealth: false,
+  customPhilhealthEE: 0,
+  overridePagibig: false,
+  customPagibigEE: 0
+};
+
+export default function App() {
+  const [isDark, setIsDark] = useState(false);
+  const [activeTab, setActiveTab] = useState('calculator');
+  const [freqTab, setFreqTab] = useState('monthly');
+  const [inputs, setInputs] = useState({ ...DEFAULT_INPUTS });
+
+  const [activeCalc, setActiveCalc] = useState(null);
+  const [openGuide, setOpenGuide] = useState(null);
+  const [savedSimulations, setSavedSimulations] = useState([]);
+  const [infoModal, setInfoModal] = useState(null);
+  const [saveName, setSaveName] = useState('');
+  const [showNotification, setShowNotification] = useState(false);
+  const [notifMessage, setNotifMessage] = useState('');
+
+  const calculatedOutput = calculatePayroll2026(inputs);
+  const results = calculatedOutput[freqTab];
+  const paydays = computePaychecks(calculatedOutput, inputs);
+  const isSemi = inputs.payoutSchedule === 'semi1530' || inputs.payoutSchedule === 'semi520';
+
+  useEffect(() => {
+    const saved = localStorage.getItem('ph_payroll_saves_2026');
+    if (saved) {
+      try {
+        setSavedSimulations(JSON.parse(saved));
+      } catch (e) {
+        console.error('Local saves parsing error', e);
+      }
+    }
+  }, []);
+
+  // Background parallax: the wallpaper blobs drift with scroll and lean
+  // toward the cursor at three different depths, so the glass cards feel
+  // like they float above a moving layer. Respects reduced-motion.
+  const blobBackRef = useRef(null);
+  const blobMidRef = useRef(null);
+  const blobFrontRef = useRef(null);
+  useEffect(() => {
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    let mx = 0, my = 0, tmx = 0, tmy = 0, sy = window.scrollY || 0, raf = 0;
+    const onMove = (e) => {
+      tmx = (e.clientX / window.innerWidth - 0.5) * 2;
+      tmy = (e.clientY / window.innerHeight - 0.5) * 2;
+    };
+    const onScroll = () => { sy = window.scrollY || window.pageYOffset || 0; };
+    const apply = (el, f, sf) => {
+      if (el) el.style.transform = `translate3d(${(mx * 26 * f).toFixed(2)}px, ${(my * 26 * f + sy * sf).toFixed(2)}px, 0) scale(1.18)`;
+    };
+    const tick = () => {
+      mx += (tmx - mx) * 0.06;
+      my += (tmy - my) * 0.06;
+      apply(blobBackRef.current, 0.4, 0.05);
+      apply(blobMidRef.current, 0.85, 0.10);
+      apply(blobFrontRef.current, 1.35, 0.16);
+      raf = requestAnimationFrame(tick);
+    };
+    window.addEventListener('mousemove', onMove, { passive: true });
+    window.addEventListener('scroll', onScroll, { passive: true });
+    raf = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('scroll', onScroll);
+    };
+  }, []);
+
+  const triggerToast = (msg) => {
+    setNotifMessage(msg);
+    setShowNotification(true);
+    setTimeout(() => {
+      setShowNotification(false);
+    }, 3500);
+  };
+
+  const handleInputChange = (field, value) => {
+    setInputs((prev) => ({
+      ...prev,
+      [field]: value === '' ? '' : (typeof value === 'boolean' ? value : Number(value))
+    }));
+  };
+
+  const handleOptionChange = (field, value) => {
+    setInputs((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleTypeChange = (type) => {
+    setInputs((prev) => ({
+      ...prev,
+      employmentType: type,
+      isSmwe: type === 'kasambahay' ? false : prev.isSmwe,
+      overrideSss: false,
+      overridePhilhealth: false,
+      overridePagibig: false
+    }));
+  };
+
+  const handleSaveCalculation = () => {
+    const profileName = saveName.trim() || `${inputs.employmentType.toUpperCase()} - ₱${Number(inputs.basicSalary).toLocaleString()}`;
+    const newSave = {
+      id: Date.now(),
+      name: profileName,
+      timestamp: new Date().toLocaleDateString(),
+      inputs: { ...inputs },
+      results: { ...calculatedOutput }
+    };
+    const updated = [newSave, ...savedSimulations];
+    setSavedSimulations(updated);
+    localStorage.setItem('ph_payroll_saves_2026', JSON.stringify(updated));
+    setSaveName('');
+    triggerToast(`"${profileName}" saved to browser history!`);
+  };
+
+  const handleDeleteSaved = (id, name) => {
+    const updated = savedSimulations.filter((item) => item.id !== id);
+    setSavedSimulations(updated);
+    localStorage.setItem('ph_payroll_saves_2026', JSON.stringify(updated));
+    triggerToast(`Deleted snapshot "${name}"`);
+  };
+
+  const handleLoadSaved = (savedItem) => {
+    // Merge over defaults so snapshots saved before the
+    // payout-schedule feature still load cleanly.
+    setInputs({ ...DEFAULT_INPUTS, ...savedItem.inputs });
+    setActiveTab('calculator');
+    triggerToast(`Loaded snapshot parameters: "${savedItem.name}"`);
+  };
+
+  const handleApplyNegotiatedGross = (resolvedGross) => {
+    setInputs((prev) => ({
+      ...prev,
+      basicSalary: Math.round(resolvedGross)
+    }));
+    setActiveTab('calculator');
+    triggerToast(`Applied solved Gross base of ₱${Math.round(resolvedGross).toLocaleString()}`);
+  };
+
+  const breakdownChartData = [
+    { label: 'Net Take-Home', value: calculatedOutput.monthly.net, color: '#30D158' },
+    { label: 'Withholding Tax', value: calculatedOutput.monthly.tax, color: '#FF453A' },
+    {
+      label: inputs.employmentType === 'government' ? 'GSIS Pension' : 'SSS Contribution',
+      value: inputs.employmentType === 'government' ? calculatedOutput.monthly.gsis : calculatedOutput.monthly.sss,
+      color: '#0A84FF'
+    },
+    { label: 'PhilHealth Premium', value: calculatedOutput.monthly.philhealth, color: '#FF9F0A' },
+    { label: 'Pag-IBIG Fund', value: calculatedOutput.monthly.pagibig, color: '#FF375F' }
+  ];
+
+  // ------------------------------------------------------------
+  // Liquid Glass design tokens (Apple iOS 26 / macOS Tahoe)
+  // ------------------------------------------------------------
+  const accent = isDark ? '#0A84FF' : '#007AFF';
+  const t = {
+    text: isDark ? 'text-white' : 'text-[#1d1d1f]',
+    textMuted: isDark ? 'text-white/55' : 'text-black/50',
+    textAccent: isDark ? 'text-[#0A84FF]' : 'text-[#007AFF]',
+    divider: isDark ? 'border-white/10' : 'border-black/[0.08]',
+
+    header: `sticky top-0 z-30 border-b backdrop-blur-2xl backdrop-saturate-[180%] transition-all duration-500 ${
+      isDark ? 'bg-[#000004]/55 border-white/10' : 'bg-white/40 border-white/60'
+    }`,
+
+    card: `relative overflow-hidden rounded-[28px] border backdrop-blur-2xl backdrop-saturate-[180%] transition-all duration-500 ${
+      isDark
+        ? 'bg-[#1c1c1e]/55 border-white/10 text-white shadow-[0_24px_60px_rgba(0,0,0,0.5),inset_0_1px_0_rgba(255,255,255,0.12)]'
+        : 'bg-white/55 border-white/70 text-[#1d1d1f] shadow-[0_24px_60px_rgba(31,38,135,0.12),inset_0_1px_0_rgba(255,255,255,0.9)]'
+    }`,
+
+    panel: `rounded-2xl border backdrop-blur-xl transition-all duration-300 ${
+      isDark
+        ? 'bg-white/[0.06] border-white/10 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]'
+        : 'bg-white/60 border-white/70 text-[#1d1d1f] shadow-[inset_0_1px_0_rgba(255,255,255,0.85),0_4px_16px_rgba(31,38,135,0.06)]'
+    }`,
+
+    chipRow: isDark
+      ? 'bg-white/[0.06] border border-white/10'
+      : 'bg-white/65 border border-white/70 shadow-sm',
+
+    input: `w-full px-3 py-1.5 rounded-xl text-xs font-semibold border focus:outline-none focus:ring-2 transition-all backdrop-blur-md ${
+      isDark
+        ? 'bg-white/[0.07] border-white/10 text-white focus:ring-[#0A84FF]/60'
+        : 'bg-white/70 border-white/80 text-[#1d1d1f] focus:ring-[#007AFF]/50 focus:bg-white/95'
+    }`,
+
+    select: `rounded-xl text-xs font-semibold border focus:outline-none focus:ring-2 transition-all backdrop-blur-md ${
+      isDark
+        ? 'bg-white/[0.07] border-white/10 text-white focus:ring-[#0A84FF]/60'
+        : 'bg-white/70 border-white/80 text-[#1d1d1f] focus:ring-[#007AFF]/50'
+    }`,
+
+    segTrack: `gap-1 p-1 rounded-full border backdrop-blur-xl transition-all ${
+      isDark ? 'bg-white/[0.06] border-white/10' : 'bg-black/[0.05] border-white/70 shadow-[inset_0_1px_2px_rgba(0,0,0,0.04)]'
+    }`,
+    segActive: isDark
+      ? 'bg-[#0A84FF] text-white shadow-[0_4px_14px_rgba(10,132,255,0.45)]'
+      : 'bg-white text-[#1d1d1f] shadow-[0_3px_10px_rgba(0,0,0,0.12),inset_0_1px_0_rgba(255,255,255,1)]',
+    segIdle: isDark ? 'text-white/55 hover:text-white' : 'text-black/45 hover:text-black/80',
+
+    tableRowHover: isDark ? 'hover:bg-white/[0.05]' : 'hover:bg-white/60',
+    tableRowActive: isDark ? 'bg-[#0A84FF]/20 font-bold text-white' : 'bg-[#007AFF]/10 font-bold text-[#003e88]',
+
+    primaryBtn: `text-white rounded-full font-bold transition-all active:scale-[0.97] ${
+      isDark
+        ? 'bg-[#0A84FF] hover:bg-[#3a9bff] shadow-[0_6px_20px_rgba(10,132,255,0.4)]'
+        : 'bg-[#007AFF] hover:bg-[#1a88ff] shadow-[0_6px_20px_rgba(0,122,255,0.35)]'
+    }`,
+
+    gradientCard: `relative overflow-hidden p-6 rounded-[28px] border backdrop-blur-2xl backdrop-saturate-[180%] transition-all duration-500 ${
+      isDark
+        ? 'bg-gradient-to-br from-[#0A84FF]/25 via-[#1c1c1e]/40 to-[#5E5CE6]/20 border-white/15 shadow-[0_24px_60px_rgba(0,0,0,0.5),inset_0_1px_0_rgba(255,255,255,0.18)]'
+        : 'bg-gradient-to-br from-[#007AFF]/15 via-white/50 to-[#5856D6]/10 border-white/80 shadow-[0_24px_60px_rgba(31,38,135,0.14),inset_0_1px_0_rgba(255,255,255,0.95)]'
+    }`,
+
+    iconBox: `p-2.5 rounded-2xl shadow-lg transition-all duration-300 ${
+      isDark
+        ? 'bg-gradient-to-tr from-[#0A84FF] to-[#5E5CE6] ring-1 ring-white/30 shadow-[0_8px_20px_rgba(10,132,255,0.4)]'
+        : 'bg-gradient-to-tr from-[#007AFF] to-[#5856D6] ring-1 ring-white/60 shadow-[0_8px_20px_rgba(0,122,255,0.35)]'
+    }`,
+
+    titleText: `text-xl font-black tracking-tight flex items-center gap-2 ${isDark ? 'text-white' : 'text-[#1d1d1f]'}`
+  };
+
+  const guides = buildGuides(t);
+
+  return (
+    <>
+      <style>{`
+        .lg-root {
+          font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+          -webkit-font-smoothing: antialiased;
+          font-feature-settings: "tnum";
+        }
+        @keyframes blob {
+          0% { transform: translate(0px, 0px) scale(1); }
+          33% { transform: translate(40px, -60px) scale(1.12); }
+          66% { transform: translate(-30px, 30px) scale(0.92); }
+          100% { transform: translate(0px, 0px) scale(1); }
+        }
+        .animate-blob { animation: blob 14s infinite alternate ease-in-out; }
+        .animation-delay-2000 { animation-delay: 2s; }
+        .animation-delay-4000 { animation-delay: 4s; }
+        @keyframes toast-in {
+          from { transform: translateY(16px) scale(0.95); opacity: 0; }
+          to { transform: translateY(0) scale(1); opacity: 1; }
+        }
+        .animate-toast { animation: toast-in 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.2) both; }
+      `}</style>
+
+      <div className={`lg-root min-h-screen flex flex-col transition-colors duration-700 relative overflow-hidden ${isDark ? 'bg-[#000004] text-white' : 'bg-[#eef1f8] text-[#1d1d1f]'}`}>
+
+        {/* Liquid Glass wallpaper: vibrant mesh blobs at three parallax depths the glass refracts */}
+        <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none">
+          <div ref={blobBackRef} className="absolute inset-0 will-change-transform">
+            <div className={`absolute -top-[12%] -left-[8%] w-[45vw] h-[45vw] rounded-full blur-[110px] animate-blob transition-colors duration-700 ${isDark ? 'bg-[#0A84FF]/30' : 'bg-[#7cb8ff]/70 mix-blend-multiply'}`} />
+            <div className={`absolute -bottom-[12%] left-[15%] w-[45vw] h-[45vw] rounded-full blur-[110px] animate-blob animation-delay-4000 transition-colors duration-700 ${isDark ? 'bg-[#64D2FF]/20' : 'bg-[#9be4ff]/70 mix-blend-multiply'}`} />
+          </div>
+          <div ref={blobMidRef} className="absolute inset-0 will-change-transform">
+            <div className={`absolute top-[15%] -right-[10%] w-[40vw] h-[40vw] rounded-full blur-[110px] animate-blob animation-delay-2000 transition-colors duration-700 ${isDark ? 'bg-[#5E5CE6]/25 ' : 'bg-[#c5b6ff]/70 mix-blend-multiply'}`} />
+          </div>
+          <div ref={blobFrontRef} className="absolute inset-0 will-change-transform">
+            <div className={`absolute top-[45%] left-[40%] w-[30vw] h-[30vw] rounded-full blur-[110px] animate-blob transition-colors duration-700 ${isDark ? 'bg-[#BF5AF2]/15' : 'bg-[#ffd6f2]/60 mix-blend-multiply'}`} />
+          </div>
+        </div>
+
+        {/* Toast Notification */}
+        {showNotification && (
+          <div className={`fixed bottom-6 right-6 z-50 px-4 py-3 rounded-2xl flex items-center gap-3 animate-toast backdrop-blur-2xl backdrop-saturate-[180%] border ${isDark ? 'bg-[#1c1c1e]/80 border-white/15 shadow-[0_16px_40px_rgba(0,0,0,0.6)]' : 'bg-white/80 border-white/80 shadow-[0_16px_40px_rgba(31,38,135,0.25)]'}`}>
+            <Sparkles className="w-5 h-5" style={{ color: accent }} />
+            <span className={`text-xs font-bold ${t.text}`}>{notifMessage}</span>
+          </div>
+        )}
+
+        {/* HEADER */}
+        <header className={t.header}>
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col sm:flex-row items-center justify-between gap-4 relative z-10">
+            <div className="flex items-center gap-3">
+              <div className={t.iconBox}>
+                <Calculator className="w-6 h-6 text-white" />
+              </div>
+              <div>
+                <h1 className={t.titleText}>
+                  SahodKo
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border shadow-sm ${isDark ? 'bg-[#0A84FF]/20 text-[#6db4ff] border-[#0A84FF]/30' : 'bg-[#007AFF]/10 text-[#007AFF] border-[#007AFF]/20'}`}>
+                    RA 11199 + TRAIN
+                  </span>
+                </h1>
+                <p className={`text-[10px] ${t.textMuted}`}>Philippine Take-Home Pay Calculator 2026 — SSS, PhilHealth, Pag-IBIG & BIR Tax</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <nav className={`${t.segTrack} flex items-center flex-wrap justify-center max-w-full`}>
+                {[
+                  { id: 'calculator', label: 'Dashboard' },
+                  { id: 'calculators', label: 'Calculators' },
+                  { id: 'guides', label: 'Guides' },
+                  { id: 'news', label: 'News' },
+                  { id: 'directory', label: 'Directory' },
+                  { id: 'contact', label: 'Contact' },
+                  { id: 'saved', label: `Saved (${savedSimulations.length})` }
+                ].map((tab) => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all duration-300 active:scale-[0.97] ${
+                      activeTab === tab.id ? t.segActive : t.segIdle
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </nav>
+
+              <button
+                onClick={() => setIsDark(!isDark)}
+                className={`p-2.5 rounded-full backdrop-blur-xl border transition-all active:scale-[0.95] ${isDark ? 'bg-white/[0.08] hover:bg-white/[0.14] border-white/15 text-[#FFD60A]' : 'bg-white/60 hover:bg-white/90 border-white/80 text-[#007AFF] shadow-sm'}`}
+                title="Toggle Theme"
+              >
+                {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+        </header>
+
+        {/* MAIN CONTAINER */}
+        <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full relative z-10">
+
+          {/* TAB 1: DASHBOARD */}
+          {activeTab === 'calculator' && (
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+
+              {/* PARAMETERS FORM PANEL */}
+              <section className={`${t.card} lg:col-span-5 p-6 space-y-6`}>
+
+                <div className="space-y-1.5">
+                  <label className={`text-xs font-bold ${t.text}`}>Monthly Basic Pay</label>
+                  <div className="relative">
+                    <span className={`absolute left-4 top-1/2 -translate-y-1/2 text-xl font-bold pointer-events-none ${t.textMuted}`}>₱</span>
+                    <input
+                      type="number"
+                      value={inputs.basicSalary}
+                      onChange={(e) => handleInputChange('basicSalary', e.target.value)}
+                      className={`${t.input} !pl-10 !py-3.5 !text-2xl !font-black !rounded-2xl text-right`}
+                    />
+                  </div>
+                </div>
+
+                <div className={`space-y-4 pt-4 border-t ${t.divider}`}>
+                  <h3 className={`text-[10px] font-black uppercase tracking-widest flex items-center gap-1 ${t.textAccent}`}>
+                    <Layers className="w-3.5 h-3.5" /> Income Components & Pre-Tax Metrics
+                  </h3>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className={`text-[10px] font-bold ${t.textMuted}`}>Total Overtime Pay</label>
+                      <div className="relative">
+                        <span className={`absolute left-2.5 top-1.5 text-xs font-bold ${t.textMuted}`}>₱</span>
+                        <input
+                          type="number"
+                          placeholder="0.00"
+                          value={inputs.overtimePay || ''}
+                          onChange={(e) => handleInputChange('overtimePay', e.target.value)}
+                          className={`${t.input} !pl-6 text-right`}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className={`text-[10px] font-bold ${t.textMuted}`}>{inputs.useNightDiff ? 'Holiday Premiums' : 'Holiday & Night Diff'}</label>
+                      <div className="relative">
+                        <span className={`absolute left-2.5 top-1.5 text-xs font-bold ${t.textMuted}`}>₱</span>
+                        <input
+                          type="number"
+                          placeholder="0.00"
+                          value={inputs.holidayNightDiff || ''}
+                          onChange={(e) => handleInputChange('holidayNightDiff', e.target.value)}
+                          className={`${t.input} !pl-6 text-right`}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className={`text-[10px] font-bold ${t.textMuted}`}>Taxable Allowances</label>
+                      <div className="relative">
+                        <span className={`absolute left-2.5 top-1.5 text-xs font-bold ${t.textMuted}`}>₱</span>
+                        <input
+                          type="number"
+                          placeholder="0.00"
+                          value={inputs.taxableAllowances || ''}
+                          onChange={(e) => handleInputChange('taxableAllowances', e.target.value)}
+                          className={`${t.input} !pl-6 text-right`}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className={`text-[10px] font-bold ${t.textMuted}`}>De Minimis (Non-taxable)</label>
+                      <div className="relative">
+                        <span className={`absolute left-2.5 top-1.5 text-xs font-bold ${t.textMuted}`}>₱</span>
+                        <input
+                          type="number"
+                          placeholder="0.00"
+                          value={inputs.nonTaxableAllowances || ''}
+                          onChange={(e) => handleInputChange('nonTaxableAllowances', e.target.value)}
+                          className={`${t.input} !pl-6 text-right`}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-[#FF3B30]">Absences, Tardiness & Undertime (Deducted from gross)</label>
+                    <div className="relative">
+                      <span className={`absolute left-2.5 top-1.5 text-xs font-bold ${t.textMuted}`}>₱</span>
+                      <input
+                        type="number"
+                        placeholder="0.00"
+                        value={inputs.absencesTardiness || ''}
+                        onChange={(e) => handleInputChange('absencesTardiness', e.target.value)}
+                        className={`${t.input} !pl-6 text-right`}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* WORK SCHEDULE & NIGHT DIFFERENTIAL */}
+                <div className={`pt-4 border-t ${t.divider} space-y-3`}>
+                  <div className="flex items-center justify-between gap-3">
+                    <h3 className={`text-[10px] font-black uppercase tracking-widest flex items-center gap-1 ${t.textAccent}`}>
+                      <Clock className="w-3.5 h-3.5" /> Work Schedule & Night Differential
+                    </h3>
+                    <Toggle
+                      checked={inputs.useNightDiff}
+                      onChange={(v) => handleInputChange('useNightDiff', v)}
+                      isDark={isDark}
+                    />
+                  </div>
+
+                  {inputs.useNightDiff ? (
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className={`text-[10px] font-bold ${t.textMuted}`}>Shift Start</label>
+                          <input
+                            type="time"
+                            value={inputs.shiftStart}
+                            onChange={(e) => handleOptionChange('shiftStart', e.target.value)}
+                            className={t.input}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className={`text-[10px] font-bold ${t.textMuted}`}>Shift End</label>
+                          <input
+                            type="time"
+                            value={inputs.shiftEnd}
+                            onChange={(e) => handleOptionChange('shiftEnd', e.target.value)}
+                            className={t.input}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className={`text-[10px] font-bold ${t.textMuted}`}>Night Diff Rate (%)</label>
+                          <input
+                            type="number"
+                            min="10"
+                            value={inputs.nightDiffRate}
+                            onChange={(e) => handleInputChange('nightDiffRate', e.target.value)}
+                            className={t.input}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className={`text-[10px] font-bold ${t.textMuted}`}>Unpaid Break in 10PM–6AM (hrs)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.5"
+                            value={inputs.ndBreakHours}
+                            onChange={(e) => handleInputChange('ndBreakHours', e.target.value)}
+                            className={t.input}
+                          />
+                        </div>
+                      </div>
+
+                      <div className={`${t.panel} p-3 grid grid-cols-2 gap-2 text-center`}>
+                        <div>
+                          <span className={`text-[9px] font-bold uppercase tracking-wider block ${t.textMuted}`}>ND Hours / Shift</span>
+                          <span className={`text-sm font-black ${t.text}`}>{(calculatedOutput.raw.ndHoursPerShift || 0).toFixed(1)} hrs</span>
+                        </div>
+                        <div>
+                          <span className={`text-[9px] font-bold uppercase tracking-wider block ${t.textMuted}`}>Est. Monthly ND Pay</span>
+                          <span className="text-sm font-black text-[#30D158]">{peso(calculatedOutput.raw.autoNightDiff || 0)}</span>
+                        </div>
+                      </div>
+
+                      <p className={`text-[10px] leading-relaxed ${t.textMuted}`}>
+                        Night differential applies to hours worked between <strong>10:00 PM and 6:00 AM</strong> (Labor Code Art. 86) at no less than <strong>10%</strong> of your hourly rate — many BPOs pay 15–25%, so adjust the rate to match your employer. Rates below 10% are clamped to the legal floor. The amount is added to your taxable gross automatically; use the "Holiday Premiums" field only for holiday pay to avoid double-counting.
+                      </p>
+                    </div>
+                  ) : (
+                    <p className={`text-[10px] leading-relaxed ${t.textMuted}`}>
+                      Work nights (e.g. 9:00 PM – 6:00 AM)? Turn this on and SahodKo computes your night differential pay from your shift hours automatically.
+                    </p>
+                  )}
+                </div>
+
+                <div className={`pt-4 border-t ${t.divider} space-y-3`}>
+                  <h3 className="text-[10px] font-black uppercase tracking-widest text-[#FF9F0A] flex items-center gap-1">
+                    <ShieldCheck className="w-3.5 h-3.5" /> Contribution Manual Overrides
+                  </h3>
+
+                  <div className={`${t.panel} p-3 space-y-3 text-[11px]`}>
+
+                    {inputs.employmentType !== 'government' && (
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2.5">
+                          <Toggle
+                            checked={inputs.overrideSss}
+                            onChange={(v) => handleInputChange('overrideSss', v)}
+                            isDark={isDark}
+                          />
+                          <span className={`font-semibold ${t.textMuted}`}>Manual SSS EE Contribution</span>
+                        </div>
+                        {inputs.overrideSss && (
+                          <input
+                            type="number"
+                            value={inputs.customSssEE}
+                            onChange={(e) => handleInputChange('customSssEE', e.target.value)}
+                            className={`${t.input} !w-20 !px-2`}
+                          />
+                        )}
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5">
+                        <Toggle
+                          checked={inputs.overridePhilhealth}
+                          onChange={(v) => handleInputChange('overridePhilhealth', v)}
+                          isDark={isDark}
+                        />
+                        <span className={`font-semibold ${t.textMuted}`}>Manual PhilHealth EE Premium</span>
+                      </div>
+                      {inputs.overridePhilhealth && (
+                        <input
+                          type="number"
+                          value={inputs.customPhilhealthEE}
+                          onChange={(e) => handleInputChange('customPhilhealthEE', e.target.value)}
+                          className={`${t.input} !w-20 !px-2`}
+                        />
+                      )}
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5">
+                        <Toggle
+                          checked={inputs.overridePagibig}
+                          onChange={(v) => handleInputChange('overridePagibig', v)}
+                          isDark={isDark}
+                        />
+                        <span className={`font-semibold ${t.textMuted}`}>Manual Pag-IBIG EE Premium</span>
+                      </div>
+                      {inputs.overridePagibig && (
+                        <input
+                          type="number"
+                          value={inputs.customPagibigEE}
+                          onChange={(e) => handleInputChange('customPagibigEE', e.target.value)}
+                          className={`${t.input} !w-20 !px-2`}
+                        />
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className={`pt-4 border-t ${t.divider}`}>
+                  <h2 className={`text-md font-bold flex items-center gap-2 ${t.text}`}>
+                    <Settings className={`w-4 h-4 ${t.textAccent}`} /> Worker Classification
+                  </h2>
+
+                  <Segmented
+                    wrapClass="grid grid-cols-2 mt-3"
+                    options={[
+                      { id: 'private', label: 'Private Employee' },
+                      { id: 'government', label: 'Govt (GSIS)' },
+                      { id: 'self-employed', label: 'Freelancer' },
+                      { id: 'kasambahay', label: 'Kasambahay' }
+                    ]}
+                    value={inputs.employmentType}
+                    onChange={handleTypeChange}
+                    t={t}
+                  />
+                </div>
+
+                {/* PAYOUT SCHEDULE & DEDUCTION TIMING */}
+                <div className={`pt-4 border-t ${t.divider} space-y-4`}>
+                  <h2 className={`text-md font-bold flex items-center gap-2 ${t.text}`}>
+                    <CalendarDays className={`w-4 h-4 ${t.textAccent}`} /> Payout Schedule
+                  </h2>
+
+                  <Segmented
+                    wrapClass="grid grid-cols-2"
+                    options={SCHEDULE_OPTIONS}
+                    value={inputs.payoutSchedule}
+                    onChange={(v) => handleOptionChange('payoutSchedule', v)}
+                    t={t}
+                  />
+
+                  {isSemi && (
+                    <div className="space-y-3">
+                      <div className="space-y-1.5">
+                        <label className={`text-[10px] font-bold uppercase tracking-widest ${t.textMuted}`}>
+                          SSS / PhilHealth / Pag-IBIG deducted on
+                        </label>
+                        <Segmented
+                          options={TIMING_OPTIONS}
+                          value={inputs.contribTiming}
+                          onChange={(v) => handleOptionChange('contribTiming', v)}
+                          t={t}
+                          wrapClass="flex items-center"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className={`text-[10px] font-bold uppercase tracking-widest ${t.textMuted}`}>
+                          Withholding tax deducted on
+                        </label>
+                        <Segmented
+                          options={TIMING_OPTIONS}
+                          value={inputs.taxTiming}
+                          onChange={(v) => handleOptionChange('taxTiming', v)}
+                          t={t}
+                          wrapClass="flex items-center"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {inputs.payoutSchedule === 'weekly' && (
+                    <div className="space-y-1.5">
+                      <label className={`text-[10px] font-bold uppercase tracking-widest ${t.textMuted}`}>
+                        Statutory deductions applied
+                      </label>
+                      <Segmented
+                        options={WEEKLY_TIMING_OPTIONS}
+                        value={inputs.weeklyTiming}
+                        onChange={(v) => handleOptionChange('weeklyTiming', v)}
+                        t={t}
+                        wrapClass="flex items-center"
+                      />
+                    </div>
+                  )}
+
+                  <p className={`text-[10px] leading-relaxed ${t.textMuted}`}>
+                    Many PH employers take government contributions on one cutoff and tax on the other — set this to mirror your actual payslip. See the Payday Breakdown card for the per-payout result.
+                  </p>
+                </div>
+
+                {inputs.employmentType !== 'kasambahay' && (
+                  <div className={`${t.panel} p-4 space-y-2`}>
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex-1">
+                        <span className={`text-xs font-bold block ${t.text}`}>Statutory Minimum Wage Earner?</span>
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md inline-block mt-1 ${isDark ? 'bg-[#30D158]/20 text-[#30D158]' : 'bg-[#34C759]/15 text-[#1e9e4a]'}`}>Tax Exempt</span>
+                      </div>
+                      <Toggle
+                        checked={inputs.isSmwe}
+                        onChange={(v) => handleInputChange('isSmwe', v)}
+                        isDark={isDark}
+                      />
+                    </div>
+                    <p className={`text-[10px] leading-relaxed ${t.textMuted}`}>
+                      Under RR No. 11-2018 (TRAIN Law), qualified SMWEs are completely exempt from withholding income tax on basic, overtime, hazard, and night shift premium pays.
+                    </p>
+                  </div>
+                )}
+
+                <div className={`pt-4 border-t ${t.divider} space-y-2`}>
+                  <h3 className={`text-[10px] font-black uppercase tracking-widest ${t.textMuted}`}>Save Snapshot to Cache</h3>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="E.g. Manila Dev Offer..."
+                      value={saveName}
+                      onChange={(e) => setSaveName(e.target.value)}
+                      className={t.input}
+                    />
+                    <button
+                      onClick={handleSaveCalculation}
+                      className={`${t.primaryBtn} px-4 py-1.5 text-[10px] flex items-center gap-1 whitespace-nowrap`}
+                    >
+                      <PlusCircle className="w-4 h-4" /> Save
+                    </button>
+                  </div>
+                </div>
+
+              </section>
+
+              {/* RESULTS DASHBOARD */}
+              <section className="lg:col-span-7 space-y-6">
+
+                {/* HERO NET PAY */}
+                <div className={t.gradientCard}>
+                  <div className={`absolute top-0 right-0 transform translate-x-4 -translate-y-4 w-40 h-40 rounded-full blur-3xl pointer-events-none ${isDark ? 'bg-[#0A84FF]/20' : 'bg-[#007AFF]/20'}`} />
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full border uppercase tracking-wider ${isDark ? 'bg-[#0A84FF]/20 text-[#6db4ff] border-[#0A84FF]/30' : 'bg-[#007AFF]/10 text-[#007AFF] border-[#007AFF]/20'}`}>
+                        {freqTab} Net Take-Home Projected
+                      </span>
+                      <h3 className={`text-3xl sm:text-4xl font-black mt-1.5 tracking-tight ${t.text}`}>
+                        {peso(results.net)}
+                      </h3>
+                      <p className={`text-[10px] mt-1 ${t.textMuted}`}>
+                        Computed Gross Pay of {peso(results.gross)} with overall taxes subtracted.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => window.print()}
+                      className={`px-3 py-2 rounded-full border transition-all flex items-center gap-1.5 text-xs font-bold active:scale-[0.97] ${t.panel} hover:opacity-80`}
+                    >
+                      <Printer className="w-4 h-4" /> Print
+                    </button>
+                  </div>
+
+                  <div className={`grid grid-cols-3 gap-3 mt-6 pt-5 border-t ${t.divider}`}>
+                    <div className={`${t.panel} p-3`}>
+                      <span className={`text-[9px] font-bold block uppercase tracking-wider ${t.textMuted}`}>Estimated BIR Tax</span>
+                      <span className="text-xs font-bold text-[#FF453A] mt-0.5 block">{peso(results.tax)}</span>
+                    </div>
+                    <div className={`${t.panel} p-3`}>
+                      <span className={`text-[9px] font-bold block uppercase tracking-wider ${t.textMuted}`}>Employee Deductions</span>
+                      <span className={`text-xs font-bold mt-0.5 block ${t.textAccent}`}>{peso(results.deductions)}</span>
+                    </div>
+                    <div className={`${t.panel} p-3`}>
+                      <span className={`text-[9px] font-bold block uppercase tracking-wider ${t.textMuted}`}>Employer Share</span>
+                      <span className="text-xs font-bold text-[#BF5AF2] mt-0.5 block">{peso(results.erContribution)}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* PAYDAY BREAKDOWN — per-cutoff take-home given deduction timing */}
+                <div className={`${t.card} p-6 space-y-4`}>
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <h3 className={`text-md font-bold flex items-center gap-2 ${t.text}`}>
+                      <Wallet className={`w-4 h-4 ${t.textAccent}`} /> Payday Breakdown
+                    </h3>
+                    <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full border ${isDark ? 'bg-white/[0.07] border-white/15 text-white/70' : 'bg-white/70 border-white/80 text-black/55 shadow-sm'}`}>
+                      {paydays.scheduleLabel}
+                    </span>
+                  </div>
+
+                  <div className={`grid gap-3 ${paydays.checks.length > 1 ? 'sm:grid-cols-2' : 'grid-cols-1'}`}>
+                    {paydays.checks.map((check, idx) => (
+                      <div key={idx} className={`${t.panel} p-4 space-y-3`}>
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <span className={`text-sm font-black block ${t.text}`}>{check.label}</span>
+                            <span className={`text-[10px] ${t.textMuted}`}>{check.sub}</span>
+                          </div>
+                          {check.net < 0 && (
+                            <AlertTriangle className="w-4 h-4 text-[#FF453A]" />
+                          )}
+                        </div>
+
+                        <div className={`space-y-1.5 text-[11px] border-t ${t.divider} pt-3`}>
+                          <div className={`flex justify-between ${t.textMuted}`}>
+                            <span>Gross for this payout</span>
+                            <span className={`font-bold ${t.text}`}>{peso(check.gross)}</span>
+                          </div>
+                          <div className={`flex justify-between ${t.textMuted}`}>
+                            <span>Contributions (SSS/PH/PI)</span>
+                            <span className={`font-bold ${check.contribs > 0 ? 'text-[#FF9F0A]' : ''}`}>
+                              {check.contribs > 0 ? `− ${peso(check.contribs)}` : '—'}
+                            </span>
+                          </div>
+                          <div className={`flex justify-between ${t.textMuted}`}>
+                            <span>Withholding tax</span>
+                            <span className={`font-bold ${check.tax > 0 ? 'text-[#FF453A]' : ''}`}>
+                              {check.tax > 0 ? `− ${peso(check.tax)}` : '—'}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className={`flex justify-between items-baseline border-t ${t.divider} pt-2.5`}>
+                          <span className={`text-[10px] font-bold uppercase tracking-wider ${t.textMuted}`}>Cash Received</span>
+                          <span className={`text-lg font-black ${check.net < 0 ? 'text-[#FF453A]' : 'text-[#30D158]'}`}>
+                            {peso(check.net)}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {paydays.checks.some((c) => c.net < 0) && (
+                    <p className="text-[10px] font-semibold text-[#FF453A] flex items-center gap-1.5">
+                      <AlertTriangle className="w-3.5 h-3.5" />
+                      One payout goes negative — deductions exceed that cutoff's gross. Split the deductions or move them to the other cutoff.
+                    </p>
+                  )}
+                </div>
+
+                {/* OMNI-FREQUENCY MATRIX */}
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center">
+                    <h3 className={`text-[10px] font-black uppercase tracking-widest ${t.textMuted}`}>Omni-Frequency Wage Matrix</h3>
+                    <div className="flex items-center gap-1.5">
+                      <span className={`text-[10px] ${t.textMuted}`}>Days per Year:</span>
+                      <select
+                        value={inputs.workingDaysPerYear}
+                        onChange={(e) => handleInputChange('workingDaysPerYear', e.target.value)}
+                        className={`${t.select} py-0.5 px-1.5`}
+                      >
+                        <option value="261">261 Days (M-F)</option>
+                        <option value="313">313 Days (M-S)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className={`overflow-x-auto ${t.panel} !rounded-[22px]`}>
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className={`border-b ${t.divider} ${t.textMuted} uppercase tracking-wider text-[10px]`}>
+                          <th className="py-2.5 px-4">Frequency</th>
+                          <th className="py-2.5 px-3">Gross Income</th>
+                          <th className="py-2.5 px-3">Deductions</th>
+                          <th className="py-2.5 px-3">Withholding Tax</th>
+                          <th className="py-2.5 px-3 text-right">Net Take-Home</th>
+                        </tr>
+                      </thead>
+                      <tbody className={`divide-y ${t.divider} ${t.text} font-medium`}>
+                        {[
+                          { key: 'annual', label: 'Annual' },
+                          { key: 'monthly', label: 'Monthly' },
+                          { key: 'semiMonthly', label: 'Semi-Monthly' },
+                          { key: 'biWeekly', label: 'Bi-Weekly' },
+                          { key: 'weekly', label: 'Weekly' },
+                          { key: 'daily', label: 'Daily Rate' }
+                        ].map((item) => {
+                          const freqData = calculatedOutput[item.key];
+                          return (
+                            <tr
+                              key={item.key}
+                              onClick={() => setFreqTab(item.key)}
+                              className={`cursor-pointer transition-colors ${
+                                freqTab === item.key ? t.tableRowActive : t.tableRowHover
+                              }`}
+                            >
+                              <td className="py-2.5 px-4 flex items-center gap-2">
+                                <span className={`w-1.5 h-1.5 rounded-full ${freqTab === item.key ? 'bg-[#0A84FF]' : 'bg-transparent'}`} />
+                                {item.label}
+                              </td>
+                              <td className="py-2.5 px-3">{peso(freqData.gross)}</td>
+                              <td className="py-2.5 px-3">{peso(freqData.deductions)}</td>
+                              <td className="py-2.5 px-3">{peso(freqData.tax)}</td>
+                              <td className="py-2.5 px-3 text-right font-bold text-[#30D158]">{peso(freqData.net)}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <p className={`text-[10px] ${t.textMuted}`}>
+                    Matrix rows assume deductions spread evenly. Use the Payday Breakdown above for your employer's actual cutoff timing.
+                  </p>
+                </div>
+
+                {/* DONUT + STATUTORY LIST */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
+
+                  <div className="space-y-3 flex flex-col h-full">
+                    <h3 className={`text-[10px] font-black uppercase tracking-widest ${t.textMuted}`}>Deduction Distribution (Monthly)</h3>
+                    <div className="flex-1">
+                      <CustomDonutChart data={breakdownChartData} t={t} isDark={isDark} />
+                    </div>
+                  </div>
+
+                  <div className="space-y-3 flex flex-col h-full">
+                    <h3 className={`text-[10px] font-black uppercase tracking-widest ${t.textMuted}`}>Statutory Deductions Breakdown</h3>
+                    <div className={`${t.panel} p-5 flex-1 flex flex-col justify-center space-y-4`}>
+
+                      <div className={`flex justify-between items-center text-xs border-b ${t.divider} pb-4`}>
+                        <div>
+                          <div className={`flex items-center gap-2 font-bold ${t.text}`}>
+                            <span className="w-2 h-2 rounded-full bg-[#0A84FF] flex-shrink-0 shadow-sm" />
+                            {inputs.employmentType === 'government' ? 'GSIS Contribution' : 'SSS Contribution'}
+                          </div>
+                          {inputs.employmentType !== 'government' ? (
+                            <span className={`text-[10px] block mt-1 ml-4 ${t.textMuted}`}>
+                              Reg: {peso(calculatedOutput.raw.sssDetails?.eeRegular || 0, 0)} | MPF: {peso(calculatedOutput.raw.sssDetails?.eeMpf || 0, 0)} /mo
+                            </span>
+                          ) : (
+                            <span className={`text-[10px] block mt-1 ml-4 ${t.textMuted}`}>
+                              9% Employee share of Basic
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-right flex-shrink-0">
+                          <span className={`font-bold block ${t.text}`}>
+                            {peso(inputs.employmentType === 'government' ? calculatedOutput.monthly.gsis : calculatedOutput.monthly.sss)}
+                          </span>
+                          <button
+                            onClick={() => setInfoModal(inputs.employmentType === 'government' ? 'gsis' : 'sss')}
+                            className={`text-[9px] hover:underline block mt-1 ml-auto transition-colors ${t.textAccent}`}
+                          >
+                            Check Rules
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className={`flex justify-between items-center text-xs border-b ${t.divider} pb-4`}>
+                        <div>
+                          <div className={`flex items-center gap-2 font-bold ${t.text}`}>
+                            <span className="w-2 h-2 rounded-full bg-[#FF9F0A] flex-shrink-0 shadow-sm" />
+                            PhilHealth Premium
+                          </div>
+                          <span className={`text-[10px] block mt-1 ml-4 ${t.textMuted}`}>
+                            5.0% Premium split equally
+                          </span>
+                        </div>
+                        <div className="text-right flex-shrink-0">
+                          <span className={`font-bold block ${t.text}`}>
+                            {peso(calculatedOutput.monthly.philhealth)}
+                          </span>
+                          <button
+                            onClick={() => setInfoModal('philhealth')}
+                            className={`text-[9px] hover:underline block mt-1 ml-auto transition-colors ${t.textAccent}`}
+                          >
+                            Check Rules
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className={`flex justify-between items-center text-xs border-b ${t.divider} pb-4`}>
+                        <div>
+                          <div className={`flex items-center gap-2 font-bold ${t.text}`}>
+                            <span className="w-2 h-2 rounded-full bg-[#FF375F] flex-shrink-0 shadow-sm" />
+                            Pag-IBIG / HDMF Fund
+                          </div>
+                          <span className={`text-[10px] block mt-1 ml-4 ${t.textMuted}`}>
+                            Capped at ₱10,000 maximum basis
+                          </span>
+                        </div>
+                        <div className="text-right flex-shrink-0">
+                          <span className={`font-bold block ${t.text}`}>
+                            {peso(calculatedOutput.monthly.pagibig)}
+                          </span>
+                          <button
+                            onClick={() => setInfoModal('pagibig')}
+                            className={`text-[9px] hover:underline block mt-1 ml-auto transition-colors ${t.textAccent}`}
+                          >
+                            Check Rules
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="flex justify-between items-center text-xs">
+                        <div>
+                          <div className={`flex items-center gap-2 font-bold ${t.text}`}>
+                            <span className="w-2 h-2 rounded-full bg-[#FF453A] flex-shrink-0 shadow-sm" />
+                            Withholding Tax
+                          </div>
+                          <span className={`text-[10px] block mt-1 ml-4 ${t.textMuted}`}>
+                            {inputs.isSmwe ? 'SMWE Fully Tax-Exempt' : 'Graduated TRAIN Law brackets'}
+                          </span>
+                        </div>
+                        <div className="text-right flex-shrink-0">
+                          <span className={`font-bold block ${t.text}`}>
+                            {peso(calculatedOutput.monthly.tax)}
+                          </span>
+                          <button
+                            onClick={() => setInfoModal('tax')}
+                            className={`text-[9px] hover:underline block mt-1 ml-auto transition-colors ${t.textAccent}`}
+                          >
+                            Brackets
+                          </button>
+                        </div>
+                      </div>
+
+                    </div>
+                  </div>
+                </div>
+
+              </section>
+            </div>
+          )}
+
+          {/* TAB 2: CALCULATORS HUB */}
+          {activeTab === 'calculators' && (
+            <div className="max-w-4xl mx-auto space-y-6">
+              {!activeCalc ? (
+                <>
+                  <div>
+                    <h2 className={`text-lg font-bold ${t.text}`}>Calculators</h2>
+                    <p className={`text-xs ${t.textMuted}`}>Quick standalone tools for every part of your paycheck</p>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {CALCULATORS.map((c) => (
+                      <button
+                        key={c.id}
+                        onClick={() => setActiveCalc(c.id)}
+                        className={`${t.card} p-5 text-left flex items-start gap-4 transition-all hover:scale-[1.015] active:scale-[0.99]`}
+                      >
+                        <div className={t.iconBox}>
+                          <c.icon className="w-5 h-5 text-white" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <span className={`text-sm font-bold block ${t.text}`}>{c.name}</span>
+                          <span className={`text-[11px] leading-snug block mt-0.5 ${t.textMuted}`}>{c.desc}</span>
+                        </div>
+                        <ArrowRight className={`w-4 h-4 flex-shrink-0 mt-1 ${t.textAccent}`} />
+                      </button>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <div className="max-w-3xl mx-auto space-y-4">
+                  <button
+                    onClick={() => setActiveCalc(null)}
+                    className={`flex items-center gap-1.5 text-xs font-bold transition hover:opacity-75 ${t.textAccent}`}
+                  >
+                    <ArrowLeft className="w-4 h-4" /> All Calculators
+                  </button>
+                  {activeCalc === 'negotiator' && <NegotiatorTool baseInputs={inputs} onApply={handleApplyNegotiatedGross} t={t} />}
+                  {activeCalc === 'sss' && <SssCalcTool t={t} />}
+                  {activeCalc === 'philhealth' && <PhilhealthCalcTool t={t} />}
+                  {activeCalc === 'pagibig' && <PagibigCalcTool t={t} />}
+                  {activeCalc === 'tax' && <TaxCalcTool t={t} />}
+                  {activeCalc === 'thirteenth' && <ThirteenthMonthTool t={t} />}
+                  {activeCalc === 'premium' && <PremiumPayTool t={t} />}
+                  {activeCalc === 'rates' && <RateConverterTool t={t} />}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB 3: GUIDES LIBRARY */}
+          {activeTab === 'guides' && (
+            <div className="max-w-3xl mx-auto space-y-4">
+              <div className="flex items-center gap-2">
+                <BookOpen className={`w-5 h-5 ${t.textAccent}`} />
+                <div>
+                  <h2 className={`text-lg font-bold ${t.text}`}>Guides</h2>
+                  <p className={`text-xs ${t.textMuted}`}>Plain-language explainers for Philippine payroll rules (2026)</p>
+                </div>
+              </div>
+              {guides.map((g) => (
+                <div key={g.id} className={`${t.card} overflow-hidden`}>
+                  <button
+                    onClick={() => setOpenGuide(openGuide === g.id ? null : g.id)}
+                    className="w-full p-5 flex items-center justify-between gap-3 text-left"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <g.icon className={`w-5 h-5 flex-shrink-0 ${t.textAccent}`} />
+                      <div className="min-w-0">
+                        <span className={`text-sm font-bold block ${t.text}`}>{g.title}</span>
+                        <span className={`text-[11px] block ${t.textMuted}`}>{g.summary}</span>
+                      </div>
+                    </div>
+                    <ChevronDown className={`w-4 h-4 flex-shrink-0 transition-transform duration-300 ${openGuide === g.id ? 'rotate-180' : ''} ${t.textMuted}`} />
+                  </button>
+                  {openGuide === g.id && (
+                    <div className={`px-5 pb-5 text-xs leading-relaxed space-y-3 ${t.text}`}>
+                      {g.body}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* TAB: AGENCY NEWSROOM */}
+          {activeTab === 'news' && <NewsTab t={t} isDark={isDark} />}
+
+          {/* TAB: CONTACT US */}
+          {activeTab === 'contact' && <ContactTab t={t} isDark={isDark} />}
+
+          {/* TAB 4: GOVERNMENT AGENCY DIRECTORY */}
+          {activeTab === 'directory' && (
+            <div className="max-w-4xl mx-auto space-y-6">
+              <div>
+                <h2 className={`text-lg font-bold ${t.text}`}>Government Agency Directory</h2>
+                <p className={`text-xs ${t.textMuted}`}>Official hotlines, portals, and key services — verified June 2026</p>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {DIRECTORY.map((a) => (
+                  <div key={a.id} className={`${t.card} p-5 space-y-4`}>
+                    <div className="flex items-start gap-3">
+                      <div className="p-2.5 rounded-2xl ring-1 ring-white/30 shadow-lg flex-shrink-0" style={{ background: a.color }}>
+                        <a.icon className="w-5 h-5 text-white" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <h3 className={`text-sm font-bold leading-tight ${t.text}`}>{a.name}</h3>
+                        <span className={`text-[10px] font-bold ${t.textMuted}`}>{a.short}</span>
+                      </div>
+                    </div>
+                    <p className={`text-[11px] leading-relaxed ${t.textMuted}`}>{a.tagline}</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {a.services.map((s) => (
+                        <span key={s} className={`text-[9px] font-bold px-2 py-1 rounded-full ${t.chipRow} ${t.textMuted}`}>{s}</span>
+                      ))}
+                    </div>
+                    <div className={`${t.panel} p-3 space-y-2 text-xs`}>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className={`flex items-center gap-1.5 ${t.textMuted}`}><Phone className="w-3.5 h-3.5" /> {a.hotlineNote}</span>
+                        <a href={`tel:${a.hotline.replace(/[^0-9+]/g, '')}`} className={`font-black ${t.text}`}>{a.hotline}</a>
+                      </div>
+                      <div className={`flex items-center justify-between gap-2 border-t ${t.divider} pt-2`}>
+                        <span className={`flex items-center gap-1.5 ${t.textMuted}`}><Globe className="w-3.5 h-3.5" /> Website</span>
+                        <a href={a.website} target="_blank" rel="noopener noreferrer" className={`font-bold flex items-center gap-1 hover:underline ${t.textAccent}`}>
+                          {a.website.replace('https://www.', '')} <ExternalLink className="w-3 h-3" />
+                        </a>
+                      </div>
+                      <div className={`flex items-center justify-between gap-2 border-t ${t.divider} pt-2`}>
+                        <span className={`flex items-center gap-1.5 ${t.textMuted}`}><ExternalLink className="w-3.5 h-3.5" /> Online Portal</span>
+                        <a href={a.portal.url} target="_blank" rel="noopener noreferrer" className={`font-bold hover:underline text-right ${t.textAccent}`}>{a.portal.label}</a>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <p className={`text-[10px] text-center ${t.textMuted}`}>
+                SahodKo is an independent tool and is not affiliated with any government agency. Always transact through official websites and hotlines only.
+              </p>
+            </div>
+          )}
+
+          {/* TAB 4: SAVED PROFILES */}
+          {activeTab === 'saved' && (
+            <div className="max-w-4xl mx-auto space-y-6">
+              <div className="flex justify-between items-center">
+                <div>
+                  <h2 className={`text-lg font-bold ${t.text}`}>Saved Computation Snapshots</h2>
+                  <p className={`text-xs ${t.textMuted}`}>Compare different salary offers and employment classifications</p>
+                </div>
+                {savedSimulations.length > 0 && (
+                  <button
+                    onClick={() => {
+                      localStorage.removeItem('ph_payroll_saves_2026');
+                      setSavedSimulations([]);
+                      triggerToast('Cleared all local cache records.');
+                    }}
+                    className="text-[#FF3B30] hover:opacity-75 text-xs font-bold flex items-center gap-1 transition"
+                  >
+                    <Trash2 className="w-4 h-4" /> Clear All
+                  </button>
+                )}
+              </div>
+
+              {savedSimulations.length === 0 ? (
+                <div className={`text-center py-16 border-dashed ${t.card} !border-2 ${isDark ? '!border-white/15' : '!border-black/10'}`}>
+                  <History className={`w-10 h-10 mx-auto mb-3 ${t.textMuted}`} />
+                  <h4 className={`text-xs font-bold ${t.textMuted}`}>No saved profiles found</h4>
+                  <p className={`text-xs mt-1 ${t.textMuted}`}>Saves are retained inside your browser's LocalStorage</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {savedSimulations.map((item) => (
+                    <div key={item.id} className={`${t.card} p-5 space-y-4 group`}>
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <h4 className={`font-bold ${t.text}`}>{item.name}</h4>
+                          <span className={`text-[10px] ${t.textMuted}`}>Saved on {item.timestamp}</span>
+                        </div>
+                        <button
+                          onClick={() => handleDeleteSaved(item.id, item.name)}
+                          className={`${t.textMuted} hover:text-[#FF3B30] transition`}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      <div className={`grid grid-cols-2 gap-2 text-xs p-3 ${t.panel}`}>
+                        <div>
+                          <span className={`block ${t.textMuted}`}>Gross Base:</span>
+                          <span className={`font-bold ${t.text}`}>₱{Number(item.inputs.basicSalary).toLocaleString()}</span>
+                        </div>
+                        <div>
+                          <span className={`block ${t.textMuted}`}>Net Monthly:</span>
+                          <span className="font-black text-[#30D158]">{peso(item.results.monthly.net)}</span>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => handleLoadSaved(item)}
+                        className={`w-full py-2 rounded-full text-xs font-bold transition active:scale-[0.98] ${t.panel} ${t.textAccent} hover:opacity-80`}
+                      >
+                        Restore Parameters
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+        </main>
+
+        {/* COMPLIANCE INFO MODAL */}
+        {infoModal && (
+          <div className="fixed inset-0 bg-black/30 backdrop-blur-md flex items-center justify-center p-4 z-50" onClick={() => setInfoModal(null)}>
+            <div className={`p-6 max-w-md w-full space-y-4 ${t.card}`} onClick={(e) => e.stopPropagation()}>
+              <div className="flex justify-between items-start">
+                <h3 className={`text-md font-bold capitalize flex items-center gap-1.5 ${t.textAccent}`}>
+                  <Info className="w-5 h-5" /> {infoModal.toUpperCase()} Regulatory Framework (2026)
+                </h3>
+                <button
+                  onClick={() => setInfoModal(null)}
+                  className={`${t.textMuted} text-xs font-bold transition-colors hover:opacity-70`}
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className={`text-xs leading-relaxed space-y-3 ${t.text}`}>
+                {infoModal === 'sss' && (
+                  <>
+                    <p>Starting January 2026, the SSS contribution rate is fixed at <strong>15.0% of the Monthly Salary Credit (MSC)</strong>.</p>
+                    <p><strong>Employee Contribution Share:</strong> 5.0% withheld from basic pay.</p>
+                    <p><strong>Employer Contribution Share:</strong> 10.0% contributed dynamically. Additionally, the employer fully covers the Employees' Compensation (EC) surcharge (₱10 for MSCs below ₱15k, ₱30 for ₱15k and above).</p>
+                  </>
+                )}
+                {infoModal === 'gsis' && (
+                  <>
+                    <p>Government employees belong to the Government Service Insurance System (GSIS) instead of SSS.</p>
+                    <p><strong>GSIS Contribution rates:</strong> Government employees pay a fixed <strong>9.0%</strong> of basic monthly income without caps, while the employing government agency covers the remaining <strong>12.0%</strong>.</p>
+                  </>
+                )}
+                {infoModal === 'philhealth' && (
+                  <>
+                    <p>PhilHealth premium rate is stabilized at <strong>5.0%</strong> under the final step of the Universal Health Care Act.</p>
+                    <p>The premium is computed against basic wages bounded between a floor of ₱10,000 (₱500 premium) and a ceiling of ₱100,000 (₱5,000 premium).</p>
+                    <p>For employed workers, the premium is shared equally (50/50) between the employee and employer (2.5% each).</p>
+                  </>
+                )}
+                {infoModal === 'pagibig' && (
+                  <>
+                    <p>The mandatory Pag-IBIG deduction rate sits at <strong>2.0%</strong> for employees earning above ₱1,500 monthly.</p>
+                    <p>The salary basis for calculation is capped at <strong>₱10,000</strong> max, yielding an absolute flat cap deduction of <strong>₱200</strong> per month.</p>
+                  </>
+                )}
+                {infoModal === 'tax' && (
+                  <>
+                    <p>Withholding tax is calculated using the BIR graduated TRAIN Law scale.</p>
+                    <p>Annual taxable income up to ₱250,000 is fully tax-exempt. Tax is computed after statutory contributions have been subtracted from your gross taxable wage.</p>
+                  </>
+                )}
+              </div>
+
+              <button
+                onClick={() => setInfoModal(null)}
+                className={`w-full py-2.5 rounded-full text-xs font-semibold transition ${t.panel} ${t.textAccent} hover:opacity-80`}
+              >
+                Close Info Card
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Footer */}
+        <footer className={`border-t py-6 mt-12 text-center text-[11px] relative z-10 ${t.divider} ${t.textMuted}`}>
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-1">
+            <p>© 2026 SahodKo — the free Philippine take-home pay, payslip & statutory contributions calculator.</p>
+            <p>Computations follow current BIR (TRAIN Law), SSS RA 11199, PhilHealth UHC, and Pag-IBIG rules for 2026. Estimates only — your payroll office is the final authority.</p>
+          </div>
+        </footer>
+
+      </div>
+    </>
+  );
+}

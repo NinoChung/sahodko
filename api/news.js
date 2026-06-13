@@ -2,7 +2,7 @@
 // Fetches Google News RSS server-side (no browser CORS limits) and
 // caches the result on Vercel's edge for 30 minutes so Google sees
 // very little traffic from us.
-module.exports = async (req, res) => {
+export default async function handler(req, res) {
   const q = String((req.query && req.query.q) || '').slice(0, 120);
   if (!q) {
     res.status(400).json({ error: 'missing q parameter' });
@@ -25,4 +25,4 @@ module.exports = async (req, res) => {
   } catch (e) {
     res.status(502).json({ error: 'news fetch failed' });
   }
-};
+}
