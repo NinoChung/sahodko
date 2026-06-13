@@ -71,6 +71,7 @@
 }
 </script>
 <script src="https://unpkg.com/@babel/standalone@7.26.4/babel.min.js"></script>
+<script src="https://js.hcaptcha.com/1/api.js?render=explicit" async defer></script>
 <style>
   .boot-screen {
     min-height: 100vh;
@@ -111,7 +112,7 @@
   </div>
 </noscript>
 <script type="text/babel" data-type="module" data-presets="react">
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Calculator,
   TrendingUp,
@@ -1292,6 +1293,9 @@ const NewsTab = ({ t, isDark }) => {
 // Submissions are emailed to that address; nothing is stored here.
 // ============================================================
 const WEB3FORMS_ACCESS_KEY = '69c20bd2-4a2f-41e7-87dd-64723631b031';
+// Web3Forms' shared hCaptcha sitekey — works out of the box; Web3Forms
+// verifies the token server-side, so no separate hCaptcha account needed.
+const HCAPTCHA_SITEKEY = '50b2fe65-b00b-4b9e-ad62-3ba471098be2';
 
 const ContactTab = ({ t, isDark }) => {
   const [form, setForm] = useState({
@@ -1299,15 +1303,61 @@ const ContactTab = ({ t, isDark }) => {
   });
   const [status, setStatus] = useState('idle'); // idle | sending | success | error
   const [errorMsg, setErrorMsg] = useState('');
+  const [captchaToken, setCaptchaToken] = useState('');
+  const captchaRef = useRef(null);
+  const widgetId = useRef(null);
 
   const set = (k) => (e) => setForm((p) => ({ ...p, [k]: e.target.value }));
   const keyMissing = !WEB3FORMS_ACCESS_KEY || WEB3FORMS_ACCESS_KEY === 'YOUR_WEB3FORMS_ACCESS_KEY';
+
+  // Render the hCaptcha widget once its script is ready; re-render on
+  // theme change so the widget matches light/dark.
+  useEffect(() => {
+    let cancelled = false;
+    let tries = 0;
+    const mount = () => {
+      if (cancelled) return;
+      if (!window.hcaptcha || !window.hcaptcha.render) {
+        if (tries++ < 60) setTimeout(mount, 250);
+        return;
+      }
+      if (!captchaRef.current) return;
+      captchaRef.current.innerHTML = ''; // clear any prior widget (theme swap)
+      widgetId.current = null;
+      setCaptchaToken('');
+      try {
+        widgetId.current = window.hcaptcha.render(captchaRef.current, {
+          sitekey: HCAPTCHA_SITEKEY,
+          theme: isDark ? 'dark' : 'light',
+          callback: (token) => setCaptchaToken(token),
+          'expired-callback': () => setCaptchaToken(''),
+          'error-callback': () => setCaptchaToken('')
+        });
+      } catch (e) {
+        /* widget already rendered or script hiccup — ignore */
+      }
+    };
+    mount();
+    return () => { cancelled = true; };
+  }, [isDark]);
+
+  const resetCaptcha = () => {
+    setCaptchaToken('');
+    try {
+      if (window.hcaptcha && widgetId.current !== null) window.hcaptcha.reset(widgetId.current);
+    } catch (e) { /* noop */ }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (keyMissing) {
       setStatus('error');
       setErrorMsg('The contact form is not configured yet (missing Web3Forms access key).');
+      return;
+    }
+    if (!captchaToken) {
+      setStatus('error');
+      setErrorMsg('Please complete the captcha below to verify you are human.');
       return;
     }
     setStatus('sending');
@@ -1326,20 +1376,24 @@ const ContactTab = ({ t, isDark }) => {
           Organization: form.organization,
           'Phone Number': form.phone,
           email: form.email,
-          Message: form.message
+          Message: form.message,
+          'h-captcha-response': captchaToken
         })
       });
       const data = await res.json();
       if (data.success) {
         setStatus('success');
         setForm({ firstName: '', lastName: '', organization: '', phone: '', email: '', message: '' });
+        resetCaptcha();
       } else {
         setStatus('error');
         setErrorMsg(data.message || 'Something went wrong. Please try again.');
+        resetCaptcha();
       }
     } catch (err) {
       setStatus('error');
       setErrorMsg('Network error. Please check your connection and try again.');
+      resetCaptcha();
     }
   };
 
@@ -1426,6 +1480,8 @@ const ContactTab = ({ t, isDark }) => {
             <textarea required rows={5} value={form.message} onChange={set('message')} placeholder="How can we help?" className={`${t.input} !pl-9 !py-2.5 resize-y`} />
           </div>
         </div>
+
+        <div ref={captchaRef} className="min-h-[78px] flex items-center" />
 
         {status === 'error' && (
           <div className={`flex items-start gap-2 text-[11px] font-semibold p-3 rounded-xl ${isDark ? 'bg-[#FF453A]/15 text-[#FF6961]' : 'bg-[#FF3B30]/10 text-[#D70015]'}`}>
