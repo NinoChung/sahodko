@@ -403,11 +403,13 @@ const peso = (n, d = 2) =>
 // ============================================================
 // Liquid Glass UI Primitives
 // ============================================================
-const Toggle = ({ checked, onChange, isDark }) => (
+const Toggle = ({ checked, onChange, isDark, label }) => (
   <button
     type="button"
     role="switch"
     aria-checked={checked}
+    aria-label={label}
+    title={label}
     onClick={() => onChange(!checked)}
     className={`relative w-[44px] h-[26px] rounded-full flex-shrink-0 transition-colors duration-300 ${
       checked ? 'bg-[#34C759]' : isDark ? 'bg-white/20' : 'bg-black/15'
@@ -534,6 +536,7 @@ const ToolField = ({ label, value, onChange, t, prefix = '₱' }) => (
         type="number"
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        aria-label={label}
         className={`${t.input} ${prefix ? '!pl-8' : ''} !py-2 text-base font-black`}
       />
     </div>
@@ -708,7 +711,7 @@ const PremiumPayTool = ({ t }) => {
       </div>
       <div className="space-y-1.5">
         <label className={`text-xs font-bold ${t.text}`}>Premium Type</label>
-        <select value={typeId} onChange={(e) => setTypeId(e.target.value)} className={`${t.select} w-full py-2 px-3`}>
+        <select value={typeId} onChange={(e) => setTypeId(e.target.value)} aria-label="Premium pay type" className={`${t.select} w-full py-2 px-3`}>
           {PREMIUM_TYPES.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
         </select>
       </div>
@@ -736,7 +739,7 @@ const RateConverterTool = ({ t }) => {
         <ToolField label="Monthly Salary" value={monthly} onChange={setMonthly} t={t} />
         <div className="space-y-1.5">
           <label className={`text-xs font-bold ${t.text}`}>Working Days / Year</label>
-          <select value={days} onChange={(e) => setDays(Number(e.target.value))} className={`${t.select} w-full !py-2 px-3`}>
+          <select value={days} onChange={(e) => setDays(Number(e.target.value))} aria-label="Working days per year" className={`${t.select} w-full !py-2 px-3`}>
             <option value="261">261 (Mon–Fri)</option>
             <option value="313">313 (Mon–Sat)</option>
             <option value="365">365 (Daily paid)</option>
@@ -1332,14 +1335,14 @@ const ContactTab = ({ t, isDark }) => {
             <label className={labelCls}>First Name *</label>
             <div className="relative">
               <FieldIcon icon={User} />
-              <input type="text" required value={form.firstName} onChange={set('firstName')} placeholder="Juan" className={`${t.input} !pl-9 !py-2.5`} />
+              <input type="text" required value={form.firstName} onChange={set('firstName')} placeholder="Juan" aria-label="First Name" className={`${t.input} !pl-9 !py-2.5`} />
             </div>
           </div>
           <div className="space-y-1.5">
             <label className={labelCls}>Last Name *</label>
             <div className="relative">
               <FieldIcon icon={User} />
-              <input type="text" required value={form.lastName} onChange={set('lastName')} placeholder="Dela Cruz" className={`${t.input} !pl-9 !py-2.5`} />
+              <input type="text" required value={form.lastName} onChange={set('lastName')} placeholder="Dela Cruz" aria-label="Last Name" className={`${t.input} !pl-9 !py-2.5`} />
             </div>
           </div>
         </div>
@@ -1348,7 +1351,7 @@ const ContactTab = ({ t, isDark }) => {
           <label className={labelCls}>Organization</label>
           <div className="relative">
             <FieldIcon icon={Building2} />
-            <input type="text" value={form.organization} onChange={set('organization')} placeholder="Company or organization (optional)" className={`${t.input} !pl-9 !py-2.5`} />
+            <input type="text" value={form.organization} onChange={set('organization')} placeholder="Company or organization (optional)" aria-label="Organization" className={`${t.input} !pl-9 !py-2.5`} />
           </div>
         </div>
 
@@ -1357,14 +1360,14 @@ const ContactTab = ({ t, isDark }) => {
             <label className={labelCls}>Phone Number</label>
             <div className="relative">
               <FieldIcon icon={Phone} />
-              <input type="tel" value={form.phone} onChange={set('phone')} placeholder="+63 9XX XXX XXXX" className={`${t.input} !pl-9 !py-2.5`} />
+              <input type="tel" value={form.phone} onChange={set('phone')} placeholder="+63 9XX XXX XXXX" aria-label="Phone Number" className={`${t.input} !pl-9 !py-2.5`} />
             </div>
           </div>
           <div className="space-y-1.5">
             <label className={labelCls}>Email Address *</label>
             <div className="relative">
               <FieldIcon icon={Mail} />
-              <input type="email" required value={form.email} onChange={set('email')} placeholder="you@email.com" className={`${t.input} !pl-9 !py-2.5`} />
+              <input type="email" required value={form.email} onChange={set('email')} placeholder="you@email.com" aria-label="Email Address" className={`${t.input} !pl-9 !py-2.5`} />
             </div>
           </div>
         </div>
@@ -1373,7 +1376,7 @@ const ContactTab = ({ t, isDark }) => {
           <label className={labelCls}>Message *</label>
           <div className="relative">
             <MessageSquare className={`absolute left-3 top-3 w-4 h-4 ${t.textMuted}`} />
-            <textarea required rows={5} value={form.message} onChange={set('message')} placeholder="How can we help?" className={`${t.input} !pl-9 !py-2.5 resize-y`} />
+            <textarea required rows={5} value={form.message} onChange={set('message')} placeholder="How can we help?" aria-label="Message" className={`${t.input} !pl-9 !py-2.5 resize-y`} />
           </div>
         </div>
 
@@ -1585,7 +1588,7 @@ export default function App() {
   const accent = isDark ? '#0A84FF' : '#007AFF';
   const t = {
     text: isDark ? 'text-white' : 'text-[#1d1d1f]',
-    textMuted: isDark ? 'text-white/55' : 'text-black/50',
+    textMuted: isDark ? 'text-white/70' : 'text-black/60',
     textAccent: isDark ? 'text-[#0A84FF]' : 'text-[#007AFF]',
     divider: isDark ? 'border-white/10' : 'border-black/[0.08]',
 
@@ -1748,6 +1751,7 @@ export default function App() {
                 onClick={() => setIsDark(!isDark)}
                 className={`p-2.5 rounded-full backdrop-blur-xl border transition-all active:scale-[0.95] ${isDark ? 'bg-white/[0.08] hover:bg-white/[0.14] border-white/15 text-[#FFD60A]' : 'bg-white/60 hover:bg-white/90 border-white/80 text-[#007AFF] shadow-sm'}`}
                 title="Toggle Theme"
+                aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
               >
                 {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
               </button>
@@ -1773,15 +1777,16 @@ export default function App() {
                       type="number"
                       value={inputs.basicSalary}
                       onChange={(e) => handleInputChange('basicSalary', e.target.value)}
+                      aria-label="Monthly Basic Pay"
                       className={`${t.input} !pl-10 !py-3.5 !text-2xl !font-black !rounded-2xl text-right`}
                     />
                   </div>
                 </div>
 
                 <div className={`space-y-4 pt-4 border-t ${t.divider}`}>
-                  <h3 className={`text-[10px] font-black uppercase tracking-widest flex items-center gap-1 ${t.textAccent}`}>
+                  <h2 className={`text-[10px] font-black uppercase tracking-widest flex items-center gap-1 ${t.textAccent}`}>
                     <Layers className="w-3.5 h-3.5" /> Income Components & Pre-Tax Metrics
-                  </h3>
+                  </h2>
 
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1">
@@ -1793,6 +1798,7 @@ export default function App() {
                           placeholder="0.00"
                           value={inputs.overtimePay || ''}
                           onChange={(e) => handleInputChange('overtimePay', e.target.value)}
+                          aria-label="Total Overtime Pay"
                           className={`${t.input} !pl-6 text-right`}
                         />
                       </div>
@@ -1807,6 +1813,7 @@ export default function App() {
                           placeholder="0.00"
                           value={inputs.holidayNightDiff || ''}
                           onChange={(e) => handleInputChange('holidayNightDiff', e.target.value)}
+                          aria-label="Holiday and night differential pay"
                           className={`${t.input} !pl-6 text-right`}
                         />
                       </div>
@@ -1823,6 +1830,7 @@ export default function App() {
                           placeholder="0.00"
                           value={inputs.taxableAllowances || ''}
                           onChange={(e) => handleInputChange('taxableAllowances', e.target.value)}
+                          aria-label="Taxable Allowances"
                           className={`${t.input} !pl-6 text-right`}
                         />
                       </div>
@@ -1837,6 +1845,7 @@ export default function App() {
                           placeholder="0.00"
                           value={inputs.nonTaxableAllowances || ''}
                           onChange={(e) => handleInputChange('nonTaxableAllowances', e.target.value)}
+                          aria-label="De Minimis non-taxable allowances"
                           className={`${t.input} !pl-6 text-right`}
                         />
                       </div>
@@ -1852,6 +1861,7 @@ export default function App() {
                         placeholder="0.00"
                         value={inputs.absencesTardiness || ''}
                         onChange={(e) => handleInputChange('absencesTardiness', e.target.value)}
+                        aria-label="Absences, tardiness and undertime deductions"
                         className={`${t.input} !pl-6 text-right`}
                       />
                     </div>
@@ -1868,6 +1878,7 @@ export default function App() {
                       checked={inputs.useNightDiff}
                       onChange={(v) => handleInputChange('useNightDiff', v)}
                       isDark={isDark}
+                      label="Enable work schedule and night differential"
                     />
                   </div>
 
@@ -1880,6 +1891,7 @@ export default function App() {
                             type="time"
                             value={inputs.shiftStart}
                             onChange={(e) => handleOptionChange('shiftStart', e.target.value)}
+                            aria-label="Shift start time"
                             className={t.input}
                           />
                         </div>
@@ -1889,6 +1901,7 @@ export default function App() {
                             type="time"
                             value={inputs.shiftEnd}
                             onChange={(e) => handleOptionChange('shiftEnd', e.target.value)}
+                            aria-label="Shift end time"
                             className={t.input}
                           />
                         </div>
@@ -1902,6 +1915,7 @@ export default function App() {
                             min="10"
                             value={inputs.nightDiffRate}
                             onChange={(e) => handleInputChange('nightDiffRate', e.target.value)}
+                            aria-label="Night differential rate percent"
                             className={t.input}
                           />
                         </div>
@@ -1913,6 +1927,7 @@ export default function App() {
                             step="0.5"
                             value={inputs.ndBreakHours}
                             onChange={(e) => handleInputChange('ndBreakHours', e.target.value)}
+                            aria-label="Unpaid break hours within night window"
                             className={t.input}
                           />
                         </div>
@@ -1954,6 +1969,7 @@ export default function App() {
                             checked={inputs.overrideSss}
                             onChange={(v) => handleInputChange('overrideSss', v)}
                             isDark={isDark}
+                            label="Manually override SSS employee contribution"
                           />
                           <span className={`font-semibold ${t.textMuted}`}>Manual SSS EE Contribution</span>
                         </div>
@@ -1962,6 +1978,7 @@ export default function App() {
                             type="number"
                             value={inputs.customSssEE}
                             onChange={(e) => handleInputChange('customSssEE', e.target.value)}
+                            aria-label="Custom SSS employee contribution amount"
                             className={`${t.input} !w-20 !px-2`}
                           />
                         )}
@@ -1974,6 +1991,7 @@ export default function App() {
                           checked={inputs.overridePhilhealth}
                           onChange={(v) => handleInputChange('overridePhilhealth', v)}
                           isDark={isDark}
+                          label="Manually override PhilHealth employee premium"
                         />
                         <span className={`font-semibold ${t.textMuted}`}>Manual PhilHealth EE Premium</span>
                       </div>
@@ -1982,6 +2000,7 @@ export default function App() {
                           type="number"
                           value={inputs.customPhilhealthEE}
                           onChange={(e) => handleInputChange('customPhilhealthEE', e.target.value)}
+                          aria-label="Custom PhilHealth employee premium amount"
                           className={`${t.input} !w-20 !px-2`}
                         />
                       )}
@@ -1993,6 +2012,7 @@ export default function App() {
                           checked={inputs.overridePagibig}
                           onChange={(v) => handleInputChange('overridePagibig', v)}
                           isDark={isDark}
+                          label="Manually override Pag-IBIG employee premium"
                         />
                         <span className={`font-semibold ${t.textMuted}`}>Manual Pag-IBIG EE Premium</span>
                       </div>
@@ -2001,6 +2021,7 @@ export default function App() {
                           type="number"
                           value={inputs.customPagibigEE}
                           onChange={(e) => handleInputChange('customPagibigEE', e.target.value)}
+                          aria-label="Custom Pag-IBIG employee premium amount"
                           className={`${t.input} !w-20 !px-2`}
                         />
                       )}
@@ -2101,6 +2122,7 @@ export default function App() {
                         checked={inputs.isSmwe}
                         onChange={(v) => handleInputChange('isSmwe', v)}
                         isDark={isDark}
+                        label="Statutory minimum wage earner (tax exempt)"
                       />
                     </div>
                     <p className={`text-[10px] leading-relaxed ${t.textMuted}`}>
@@ -2117,6 +2139,7 @@ export default function App() {
                       placeholder="E.g. Manila Dev Offer..."
                       value={saveName}
                       onChange={(e) => setSaveName(e.target.value)}
+                      aria-label="Snapshot name"
                       className={t.input}
                     />
                     <button
@@ -2242,6 +2265,7 @@ export default function App() {
                       <select
                         value={inputs.workingDaysPerYear}
                         onChange={(e) => handleInputChange('workingDaysPerYear', e.target.value)}
+                        aria-label="Working days per year"
                         className={`${t.select} py-0.5 px-1.5`}
                       >
                         <option value="261">261 Days (M-F)</option>
@@ -2334,7 +2358,7 @@ export default function App() {
                           </span>
                           <button
                             onClick={() => setInfoModal(inputs.employmentType === 'government' ? 'gsis' : 'sss')}
-                            className={`text-[9px] hover:underline block mt-1 ml-auto transition-colors ${t.textAccent}`}
+                            className={`text-[9px] hover:underline block mt-1 ml-auto py-1.5 -my-1 transition-colors ${t.textAccent}`}
                           >
                             Check Rules
                           </button>
@@ -2357,7 +2381,7 @@ export default function App() {
                           </span>
                           <button
                             onClick={() => setInfoModal('philhealth')}
-                            className={`text-[9px] hover:underline block mt-1 ml-auto transition-colors ${t.textAccent}`}
+                            className={`text-[9px] hover:underline block mt-1 ml-auto py-1.5 -my-1 transition-colors ${t.textAccent}`}
                           >
                             Check Rules
                           </button>
@@ -2380,7 +2404,7 @@ export default function App() {
                           </span>
                           <button
                             onClick={() => setInfoModal('pagibig')}
-                            className={`text-[9px] hover:underline block mt-1 ml-auto transition-colors ${t.textAccent}`}
+                            className={`text-[9px] hover:underline block mt-1 ml-auto py-1.5 -my-1 transition-colors ${t.textAccent}`}
                           >
                             Check Rules
                           </button>
@@ -2403,7 +2427,7 @@ export default function App() {
                           </span>
                           <button
                             onClick={() => setInfoModal('tax')}
-                            className={`text-[9px] hover:underline block mt-1 ml-auto transition-colors ${t.textAccent}`}
+                            className={`text-[9px] hover:underline block mt-1 ml-auto py-1.5 -my-1 transition-colors ${t.textAccent}`}
                           >
                             Brackets
                           </button>
@@ -2583,7 +2607,7 @@ export default function App() {
               {savedSimulations.length === 0 ? (
                 <div className={`text-center py-16 border-dashed ${t.card} !border-2 ${isDark ? '!border-white/15' : '!border-black/10'}`}>
                   <History className={`w-10 h-10 mx-auto mb-3 ${t.textMuted}`} />
-                  <h4 className={`text-xs font-bold ${t.textMuted}`}>No saved profiles found</h4>
+                  <h3 className={`text-xs font-bold ${t.textMuted}`}>No saved profiles found</h3>
                   <p className={`text-xs mt-1 ${t.textMuted}`}>Saves are retained inside your browser's LocalStorage</p>
                 </div>
               ) : (
@@ -2592,7 +2616,7 @@ export default function App() {
                     <div key={item.id} className={`${t.card} p-5 space-y-4 group`}>
                       <div className="flex justify-between items-start">
                         <div>
-                          <h4 className={`font-bold ${t.text}`}>{item.name}</h4>
+                          <h3 className={`font-bold ${t.text}`}>{item.name}</h3>
                           <span className={`text-[10px] ${t.textMuted}`}>Saved on {item.timestamp}</span>
                         </div>
                         <button
@@ -2639,6 +2663,7 @@ export default function App() {
                 </h3>
                 <button
                   onClick={() => setInfoModal(null)}
+                  aria-label="Close"
                   className={`${t.textMuted} text-xs font-bold transition-colors hover:opacity-70`}
                 >
                   ✕
