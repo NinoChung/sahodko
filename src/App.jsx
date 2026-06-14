@@ -1196,11 +1196,21 @@ const ContactTab = ({ t, isDark }) => {
   const set = (k) => (e) => setForm((p) => ({ ...p, [k]: e.target.value }));
   const keyMissing = !WEB3FORMS_ACCESS_KEY || WEB3FORMS_ACCESS_KEY === 'YOUR_WEB3FORMS_ACCESS_KEY';
 
-  // Render the hCaptcha widget once its script is ready; re-render on
-  // theme change so the widget matches light/dark.
+  // Lazy-load the hCaptcha script only when the Contact page is shown, then
+  // render the widget once it's ready (re-rendering on theme change). Loading
+  // it here instead of globally keeps it off every other page — better load
+  // performance and no third-party deprecation warnings site-wide.
   useEffect(() => {
     let cancelled = false;
     let tries = 0;
+    const HCAPTCHA_SRC = 'https://js.hcaptcha.com/1/api.js?render=explicit';
+    if (!document.querySelector(`script[src="${HCAPTCHA_SRC}"]`)) {
+      const s = document.createElement('script');
+      s.src = HCAPTCHA_SRC;
+      s.async = true;
+      s.defer = true;
+      document.head.appendChild(s);
+    }
     const mount = () => {
       if (cancelled) return;
       if (!window.hcaptcha || !window.hcaptcha.render) {
